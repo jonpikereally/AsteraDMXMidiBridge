@@ -1,10 +1,11 @@
 import Foundation
 
 /// A fixture patch saved to disk so it can be shared or reloaded.
-/// It holds the fixtures, MIDI channel and master CC, but not the output destination.
+/// It holds the fixtures, looks, MIDI channel and master CC, but not the output destination.
+/// Version 2 added looks and per-fixture level CCs; version 1 files still load.
 public struct PatchFile: Codable, Equatable, Sendable {
     public static let formatName = "AsteraDMXMidiBridge.patch"
-    public static let currentVersion = 1
+    public static let currentVersion = 2
     public static let fileExtension = "json"
 
     public var format: String
@@ -12,6 +13,7 @@ public struct PatchFile: Codable, Equatable, Sendable {
     public var midiChannel: Int
     public var masterCC: Int
     public var fixtures: [FixturePatch]
+    public var looks: [Look]?
 
     public init(config: BridgeConfig) {
         format = Self.formatName
@@ -19,6 +21,7 @@ public struct PatchFile: Codable, Equatable, Sendable {
         midiChannel = config.midiChannel
         masterCC = config.masterCC
         fixtures = config.fixtures
+        looks = config.looks
     }
 
     public static func export(_ config: BridgeConfig) throws -> Data {
@@ -43,6 +46,7 @@ public struct PatchFile: Codable, Equatable, Sendable {
         config.midiChannel = file.midiChannel
         config.masterCC = file.masterCC
         config.fixtures = file.fixtures
+        config.looks = file.looks ?? []
         try config.validated(requireHost: false)
         return config
     }

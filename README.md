@@ -70,9 +70,18 @@ Effect Mode RGB runs Astera’s built-in programs on the tube itself. When you c
 
 Channels 2–21 are sent continuously while output is armed, so the program keeps running between notes; only the dimmer follows MIDI. Set the tube to profile 16 at the same start address in AsteraApp.
 
+## Looks and level CCs
+
+Use these to run a show from a DAW without holding notes.
+
+- **Level CC:** each fixture row has a **Level CC**. A CC value of 0–127 sets that fixture’s level until the next value, so a CC envelope fades the tube smoothly at the 30 fps DMX rate. The dimmer uses the held note or the level CC, whichever is higher, scaled by the master. Fixtures can share a CC, for example CC 20 for the stage tubes and CC 21 for a front wash. CC 120 and 123 reset level CCs to 0.
+- **Looks:** under **Looks** on the **Fixture patch** page, click **Add look**. Give it a note that no fixture uses, a colour (colour 1) and Effect Mode settings. Playing the look’s note switches every fixture with **Follows looks** turned on to that colour and program until another look note arrives. A look note doesn’t change any levels. Turn **Follows looks** off for tubes that should keep their own colour, such as a front wash. Pick a look by hand from **Look** on the console.
+
+Looks and level CCs are saved in exported patch files.
+
 ## Save and share patches
 
-On **Fixture patch**, click **Export…** to save the patch shown, including every fixture’s profile, address, note, colours and effect settings, plus the MIDI channel and master CC, as a `.json` file. Click **Import…** to load one into the editor, check it, and click **Apply patch** to use it. Imports leave your output method, Art-Net address and universe unchanged. If an import or export fails, the error code is listed in the [error list](docs/error-list.md).
+On **Fixture patch**, click **Export…** to save the patch shown, including every fixture’s profile, address, note, level CC, colours and effect settings, the looks, plus the MIDI channel and master CC, as a `.json` file. Click **Import…** to load one into the editor, check it, and click **Apply patch** to use it. Imports leave your output method, Art-Net address and universe unchanged. If an import or export fails, the error code is listed in the [error list](docs/error-list.md).
 
 ## QLC+ fallback with the same ENTTEC
 

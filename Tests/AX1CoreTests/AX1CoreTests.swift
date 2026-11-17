@@ -224,4 +224,76 @@ final class AX1CoreTests: XCTestCase {
             XCTAssertEqual(($0 as? PatchError)?.code, "AX1-208")
         }
     }
+
+    private func effectRig() -> BridgeConfig {
+        var config = BridgeConfig.defaults
+        config.fixtures = Array(config.fixtures.prefix(2))
+        for i in config.fixtures.indices {
+            config.fixtures[i].profile = .effectRGB
+            config.fixtures[i].address = 1 + i * 21
+        }
+        config.fixtures[0].levelCC = 20
+        config.fixtures[1].levelCC = 21
+        config.fixtures[1].followsLooks = false
+        config.looks = [Look(name: "Gold Big", note: 60, color: RGB(255, 153, 13),
+                             effect: EffectSettings(program: 40, speed: 200, colors: [RGB(51, 31, 3), RGB(0, 0, 0), RGB(0, 0, 0)]))]
+        return config
+    }
+
+    func testLevelCCDrivesTheDimmerAndLookNotesSwitchOnlyFollowers() throws {
+        let config = effectRig()
+        XCTAssertNoThrow(try config.validated(requireHost: false))
+        var engine = LightingEngine()
+        XCTAssertEqual(engine.frame(config: config)[0], 0)
+
+        engine.controlChange(20, value: 127, config: config)
+        engine.controlChange(21, value: 64, config: config)
+        var frame = engine.frame(config: config)
+        XCTAssertEqual(frame[0], 255)
+        XCTAssertEqual(frame[21], 129)
+        XCTAssertEqual(Array(frame[9...11]), [255, 73, 59])     // fixture colour before any look
+
+        engine.selectLook(config.looks[0].id)
+        frame = engine.frame(config: config)
+        XCTAssertEqual(frame[2], 40)                              // program
+        XCTAssertEqual(Array(frame[9...14]), [255, 153, 13, 51, 31, 3])
+        XCTAssertEqual(Array(frame[30...32]), [255, 153, 42])    // the front fixture keeps its own colour
+        XCTAssertEqual(frame[23], 0)
+
+        // a held note above the CC wins; the master scales both
+        engine.controlChange(20, value: 10, config: config)
+        engine.noteOn(36, velocity: 127)
+        XCTAssertEqual(engine.frame(config: config)[0], 255)
+        engine.controlChange(7, value: 0, config: config)
+        XCTAssertEqual(engine.frame(config: config)[0], 0)
+
+        engine.controlChange(7, value: 127, config: config)
+        engine.controlChange(123, value: 0, config: config)
+        XCTAssertEqual(engine.frame(config: config)[0], 0)
+        XCTAssertEqual(engine.activeLook, config.looks[0].id)    // all-notes-off keeps the look
+    }
+
+    func testLookAndLevelCCValidationAndPatchRoundTrip() throws {
+        var config = effectRig()
+        config.looks[0].note = 37
+        XCTAssertThrowsError(try config.validated(requireHost: false)) {
+            XCTAssertEqual(($0 as? PatchError)?.code, "AX1-215")
+        }
+        config.looks[0].note = 60
+        config.fixtures[0].levelCC = 7
+        XCTAssertThrowsError(try config.validated(requireHost: false)) {
+            XCTAssertEqual(($0 as? PatchError)?.code, "AX1-214")
+        }
+        config.fixtures[0].levelCC = 20
+        let imported = try PatchFile.load(try PatchFile.export(config), into: .defaults)
+        XCTAssertEqual(imported.looks, config.looks)
+        XCTAssertEqual(imported.fixtures, config.fixtures)
+
+        // a version 1 patch without looks or level CCs still loads
+        let v1 = #"{"format":"AsteraDMXMidiBridge.patch","version":1,"midiChannel":0,"masterCC":7,"fixtures":[{"id":"6A1F0E2C-1B3D-4C51-9A01-0000000000A1","name":"AX1 1","address":1,"note":36,"color":{"r":1,"g":2,"b":3},"enabled":true}]}"#
+        let old = try PatchFile.load(Data(v1.utf8), into: .defaults)
+        XCTAssertEqual(old.looks, [])
+        XCTAssertNil(old.fixtures[0].levelCC)
+        XCTAssertTrue(old.fixtures[0].followsLooks)
+    }
 }

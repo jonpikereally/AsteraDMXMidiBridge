@@ -30,6 +30,8 @@ Find the code shown in the app below. The same reference is under **Error list**
 | `AX1-210` | Patch file couldn’t be read | The file is damaged or not valid JSON. Export the patch again from AsteraDMXMidiBridge and import the new file. |
 | `AX1-211` | Not an AsteraDMXMidiBridge patch | Choose a file made with **Export…** on the **Fixture patch** page. |
 | `AX1-212` | Patch from a newer app version | Choose **AsteraDMXMidiBridge → Check for Updates**, install the update, then import again. |
+| `AX1-214` | Invalid level CC | Use a level CC from 0 to 119 that isn’t the master CC, or choose **None**. |
+| `AX1-215` | Look note already in use | Give the look a note that no fixture or other look uses. |
 | `AX1-213` | Patch couldn’t be exported | Choose a folder you can write to, such as Documents, and export again. |
 
 ## Art-Net output

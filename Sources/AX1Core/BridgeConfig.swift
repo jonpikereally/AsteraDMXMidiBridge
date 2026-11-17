@@ -38,6 +38,11 @@ public struct FixturePatch: Codable, Equatable, Identifiable, Sendable {
     public var independentPixels: Bool
     /// Used only by Effect Mode profiles.
     public var effect: EffectSettings
+    /// When on, a look note replaces this fixture's colour and effect settings.
+    public var followsLooks: Bool
+    /// A MIDI CC (0–119) that sets this fixture's level, or nil for notes only.
+    /// The dimmer uses whichever is higher: the held note's velocity or the CC value.
+    public var levelCC: Int?
 
     public var noteCount: Int { independentPixels ? profile.pixelCount : 1 }
     public var maximumBaseNote: Int { 128 - noteCount }
@@ -46,7 +51,7 @@ public struct FixturePatch: Codable, Equatable, Identifiable, Sendable {
     public init(
         id: UUID = UUID(), name: String, address: Int, note: UInt8, color: RGB, enabled: Bool = true,
         profile: AX1Profile = .rgb, white: UInt8 = 0, independentPixels: Bool = false,
-        effect: EffectSettings = EffectSettings()
+        effect: EffectSettings = EffectSettings(), followsLooks: Bool = true, levelCC: Int? = nil
     ) {
         self.id = id
         self.name = name
@@ -58,10 +63,12 @@ public struct FixturePatch: Codable, Equatable, Identifiable, Sendable {
         self.white = white
         self.independentPixels = independentPixels
         self.effect = effect
+        self.followsLooks = followsLooks
+        self.levelCC = levelCC
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, address, note, color, enabled, profile, white, independentPixels, effect
+        case id, name, address, note, color, enabled, profile, white, independentPixels, effect, followsLooks, levelCC
     }
 
     public init(from decoder: Decoder) throws {
@@ -76,7 +83,9 @@ public struct FixturePatch: Codable, Equatable, Identifiable, Sendable {
             profile: try values.decodeIfPresent(AX1Profile.self, forKey: .profile) ?? .rgb,
             white: try values.decodeIfPresent(UInt8.self, forKey: .white) ?? 0,
             independentPixels: try values.decodeIfPresent(Bool.self, forKey: .independentPixels) ?? false,
-            effect: try values.decodeIfPresent(EffectSettings.self, forKey: .effect) ?? EffectSettings()
+            effect: try values.decodeIfPresent(EffectSettings.self, forKey: .effect) ?? EffectSettings(),
+            followsLooks: try values.decodeIfPresent(Bool.self, forKey: .followsLooks) ?? true,
+            levelCC: try values.decodeIfPresent(Int.self, forKey: .levelCC)
         )
     }
 }
@@ -87,13 +96,36 @@ public struct BridgeConfig: Codable, Equatable, Sendable {
     public var midiChannel: Int
     public var masterCC: Int
     public var fixtures: [FixturePatch]
+    public var looks: [Look]
 
-    public init(host: String, universe: Int, midiChannel: Int, masterCC: Int, fixtures: [FixturePatch]) {
+    public init(host: String, universe: Int, midiChannel: Int, masterCC: Int, fixtures: [FixturePatch], looks: [Look] = []) {
         self.host = host
         self.universe = universe
         self.midiChannel = midiChannel
         self.masterCC = masterCC
         self.fixtures = fixtures
+        self.looks = looks
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case host, universe, midiChannel, masterCC, fixtures, looks
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            host: try values.decode(String.self, forKey: .host),
+            universe: try values.decode(Int.self, forKey: .universe),
+            midiChannel: try values.decode(Int.self, forKey: .midiChannel),
+            masterCC: try values.decode(Int.self, forKey: .masterCC),
+            fixtures: try values.decode([FixturePatch].self, forKey: .fixtures),
+            looks: try values.decodeIfPresent([Look].self, forKey: .looks) ?? []
+        )
+    }
+
+    /// The look a note switches to, if any.
+    public func look(forNote note: UInt8) -> Look? {
+        looks.first { $0.note == note }
     }
 
     public static let defaults = BridgeConfig(
@@ -145,6 +177,18 @@ public struct BridgeConfig: Codable, Equatable, Sendable {
                 }
                 assignedNotes[note] = fixture.name
             }
+            if let cc = fixture.levelCC {
+                guard (0...119).contains(cc), cc != masterCC else {
+                    throw PatchError.invalidLevelCC(fixture.name, masterCC)
+                }
+            }
+        }
+        for look in looks {
+            guard look.note <= 127 else { throw PatchError.invalidNote(look.name, 127, 1) }
+            if let name = assignedNotes[Int(look.note)] {
+                throw PatchError.overlappingLookNote(look.name, name, Int(look.note))
+            }
+            assignedNotes[Int(look.note)] = look.name
         }
     }
 
@@ -171,6 +215,8 @@ public enum PatchError: LocalizedError, Equatable {
     case invalidNote(String, Int, Int)
     case overlappingAddress(String, String, Int)
     case overlappingNote(String, String, Int)
+    case invalidLevelCC(String, Int)
+    case overlappingLookNote(String, String, Int)
 
     public var code: String {
         switch self {
@@ -183,6 +229,8 @@ public enum PatchError: LocalizedError, Equatable {
         case .invalidNote: "AX1-207"
         case .overlappingAddress: "AX1-208"
         case .overlappingNote: "AX1-209"
+        case .invalidLevelCC: "AX1-214"
+        case .overlappingLookNote: "AX1-215"
         }
     }
 
@@ -209,6 +257,10 @@ public enum PatchError: LocalizedError, Equatable {
             message = "DMX channel \(slot) is assigned to both \(fixture) and \(other)."
         case let .overlappingNote(fixture, other, note):
             message = "MIDI note \(note) is assigned to both \(fixture) and \(other)."
+        case let .invalidLevelCC(fixture, master):
+            message = "\(fixture) needs a level CC from 0 to 119 that isn’t the master CC (\(master))."
+        case let .overlappingLookNote(look, other, note):
+            message = "Look \(look) uses MIDI note \(note), which is already assigned to \(other)."
         }
         return "\(code) · \(message)"
     }

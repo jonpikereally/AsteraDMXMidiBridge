@@ -194,10 +194,11 @@ struct ConsoleView: View {
     }
 
     private func fixtureCard(_ fixture: FixturePatch, index: Int) -> some View {
-        let noteRange = fixture.noteRange
-        let velocity = noteRange.compactMap { model.engine.levels[UInt8(clamping: $0)] }.max() ?? 0
+        let velocity = (0..<fixture.noteCount).map { model.engine.level(of: fixture, pixel: $0) }.max() ?? 0
         let level = fixture.enabled && !model.engine.blackout ? (Double(velocity) / 127) * (Double(model.engine.master) / 127) : 0
-        let tint = fixtureColor(fixture)
+        var shown = fixture
+        shown.color = model.engine.appearance(of: fixture, config: model.config).color
+        let tint = fixtureColor(shown)
         let tintStrength = min(1, max(0.28, level + 0.18))
         return Button {
             model.tap(fixture)
@@ -211,7 +212,7 @@ struct ConsoleView: View {
                 HStack(spacing: 4) {
                     ForEach(0..<16) { index in
                         let pixelNote = UInt8(clamping: Int(fixture.note) + index)
-                        let independentActive = (model.engine.levels[pixelNote] ?? 0) != 0
+                        let independentActive = (model.engine.levels[pixelNote] ?? 0) != 0 || model.engine.level(of: fixture, pixel: index) != 0
                         let on = level > 0 && (!fixture.independentPixels || fixture.profile != .rgb16 || independentActive)
                         RoundedRectangle(cornerRadius: 1.5).fill(tint.opacity(on ? tintStrength : 0.11))
                                 .shadow(color: on ? tint.opacity(level * 0.5) : .clear, radius: 5)
@@ -221,7 +222,7 @@ struct ConsoleView: View {
                 Text(fixture.name.isEmpty ? "Tube \(index + 1)" : fixture.name)
                     .font(.system(size: 15, weight: .semibold)).lineLimit(1)
                 VStack(alignment: .leading, spacing: 4) {
-                    label("DMX \(String(format: "%03d", fixture.address))   /   N \(fixture.note)", color: muted)
+                    label("DMX \(String(format: "%03d", fixture.address))   /   N \(fixture.note)" + (fixture.levelCC.map { "   /   CC \($0)" } ?? ""), color: muted)
                     Text(fixture.enabled ? fixture.profile.displayName : "Disabled")
                         .font(.system(size: 10, weight: .medium)).lineLimit(1)
                         .foregroundStyle(fixture.enabled ? tint.opacity(0.8) : muted)
@@ -307,6 +308,15 @@ struct ConsoleView: View {
             }.padding(13).rackPanel()
 
             VStack(alignment: .leading, spacing: 8) {
+                sectionTitle("Look", icon: "paintpalette")
+                Picker("Active look", selection: Binding(get: { model.engine.activeLook }, set: model.selectLook)) {
+                    Text("Patch settings").tag(UUID?.none)
+                    ForEach(model.config.looks) { Text("\($0.name)  ·  N \($0.note)").tag(Optional($0.id)) }
+                }.labelsHidden().pickerStyle(.menu)
+                label(model.config.looks.isEmpty ? "Add looks on the Fixture patch page" : "Look notes switch fixtures that follow looks", color: muted)
+            }.padding(13).rackPanel()
+
+            VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     sectionTitle("Master level", icon: "dial.medium")
                     Spacer()
@@ -375,6 +385,7 @@ struct ConsoleView: View {
                     if index != edit.fixtures.indices.last { Divider().overlay(edge.opacity(0.6)) }
                 }
             }.rackPanel().disabled(model.live)
+            looksEditor
             Text("For 16-pixel RGB, All pixels mirrors one note across the tube. Note per pixel uses 16 consecutive MIDI notes, starting at the note shown. Effect Mode RGB runs Astera’s built-in programs on the tube: its note and the master level set the dimmer, and the program settings are sent continuously.")
                 .foregroundStyle(muted).font(.system(size: 12))
         }
@@ -510,15 +521,27 @@ struct ConsoleView: View {
                 Spacer(minLength: 0)
             }.frame(width: 106, alignment: .leading)
         }.padding(.horizontal, 14).padding(.vertical, 10)
+            HStack(spacing: 18) {
+                HStack(spacing: 6) {
+                    label("LEVEL CC", color: muted)
+                    Picker("Fixture \(index + 1) level CC", selection: field.levelCC) {
+                        Text("None").tag(Int?.none)
+                        ForEach(0...119, id: \.self) { Text("CC \($0)").tag(Optional($0)) }
+                    }.labelsHidden().frame(width: 92)
+                    .help("A MIDI CC that sets this fixture's level. The dimmer uses the held note or this CC, whichever is higher.")
+                }
+                Toggle("Follows looks", isOn: field.followsLooks)
+                    .help("When on, a look note replaces this fixture's colour and effect settings.")
+                Spacer(minLength: 0)
+            }.font(.system(size: 12))
+            .padding(.leading, 54).padding(.trailing, 14).padding(.bottom, 10)
             if fixture.profile.isEffect {
-                effectPanel(index)
+                effectPanel(effect: $edit.fixtures[index].effect, name: fixture.name, colourOneHelp: "Colour 1 is the fixture colour above.")
             }
         }
     }
 
-    private func effectPanel(_ index: Int) -> some View {
-        let effect = $edit.fixtures[index].effect
-        let name = edit.fixtures[index].name
+    private func effectPanel(effect: Binding<EffectSettings>, name: String, colourOneHelp: String) -> some View {
         let strobe = effect.wrappedValue.strobe
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 18) {
@@ -545,20 +568,72 @@ struct ConsoleView: View {
                 HStack(spacing: 8) {
                     label("COLOURS 2–4", color: muted)
                     ForEach(0..<3, id: \.self) { slot in
-                        ColorPicker("\(name) effect colour \(slot + 2)", selection: Binding(
-                            get: { color(edit.fixtures[index].effect.colors[slot]) },
-                            set: { newColor in
-                                if let value = NSColor(newColor).usingColorSpace(.sRGB) {
-                                    edit.fixtures[index].effect.colors[slot] = RGB(byte(value.redComponent), byte(value.greenComponent), byte(value.blueComponent))
-                                }
-                            }), supportsOpacity: false).labelsHidden()
-                            .help("Effect colour \(slot + 2). Colour 1 is the fixture colour above.")
+                        ColorPicker("\(name) effect colour \(slot + 2)", selection: rgbBinding(effect.colors[slot]), supportsOpacity: false).labelsHidden()
+                            .help("Effect colour \(slot + 2). \(colourOneHelp)")
                     }
                 }
                 Spacer(minLength: 0)
             }
         }
         .padding(.leading, 54).padding(.trailing, 14).padding(.bottom, 12)
+    }
+
+    private var looksEditor: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                sectionTitle("Looks", icon: "paintpalette")
+                Text("A look note switches every fixture that follows looks to that colour and program. Levels still come from the fixture notes and level CCs.")
+                    .font(.system(size: 12)).foregroundStyle(muted)
+                Spacer()
+                Button { addLook() } label: { Label("Add look", systemImage: "plus") }
+                    .buttonStyle(ConsoleButton(color: muted))
+            }
+            .padding(.horizontal, 14).padding(.vertical, 11)
+            .background(recess.opacity(0.72))
+            ForEach(Array(edit.looks.indices), id: \.self) { index in
+                lookRow(index)
+                if index != edit.looks.indices.last { Divider().overlay(edge.opacity(0.6)) }
+            }
+        }.rackPanel().disabled(model.live)
+    }
+
+    private func lookRow(_ index: Int) -> some View {
+        let field = $edit.looks[index]
+        let look = edit.looks[index]
+        return DisclosureGroup {
+            effectPanel(effect: field.effect, name: look.name, colourOneHelp: "Colour 1 is the look colour.")
+        } label: {
+            HStack(spacing: 12) {
+                TextField("Look name", text: field.name)
+                    .accessibilityLabel("Look \(index + 1) name")
+                    .frame(maxWidth: .infinity)
+                label("NOTE", color: muted)
+                TextField("Note", value: field.note, format: .number.grouping(.never))
+                    .accessibilityLabel("Look \(index + 1) MIDI note")
+                    .frame(width: 43)
+                ColorPicker("Look \(index + 1) colour", selection: rgbBinding(field.color), supportsOpacity: false).labelsHidden()
+                label(EffectOption.matching(look.effect.program, in: EffectSettings.programs)?.name.uppercased() ?? "", color: muted)
+                    .frame(width: 150, alignment: .leading)
+                Button { edit.looks.remove(at: index) } label: { Image(systemName: "trash") }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("Delete look \(look.name)")
+            }
+        }
+        .padding(.horizontal, 14).padding(.vertical, 8)
+    }
+
+    private func addLook() {
+        let used = Set(edit.fixtures.flatMap { $0.noteRange } + edit.looks.map { Int($0.note) })
+        let note = (60...127).first { !used.contains($0) } ?? (0...59).first { !used.contains($0) } ?? 0
+        edit.looks.append(Look(name: "Look \(edit.looks.count + 1)", note: UInt8(note), color: RGB(255, 255, 255)))
+    }
+
+    private func rgbBinding(_ value: Binding<RGB>) -> Binding<Color> {
+        Binding(get: { color(value.wrappedValue) }, set: { newColor in
+            if let c = NSColor(newColor).usingColorSpace(.sRGB) {
+                value.wrappedValue = RGB(byte(c.redComponent), byte(c.greenComponent), byte(c.blueComponent))
+            }
+        })
     }
 
     private func effectPicker(_ title: String, options: [EffectOption], value: Binding<UInt8>, fixture: String) -> some View {
@@ -752,6 +827,8 @@ private enum BridgeErrors {
         ("AX1-211", "That file isn’t an AsteraDMXMidiBridge patch. Choose a file made with Export… on the Fixture patch page."),
         ("AX1-212", "The patch was saved by a newer version of the app. Use AsteraDMXMidiBridge → Check for Updates, then import it again."),
         ("AX1-213", "The patch couldn’t be saved in that location. Choose another folder, such as Documents, and export again."),
+        ("AX1-214", "A fixture's level CC must be 0–119 and different from the master CC. Choose another CC on the Fixture patch page."),
+        ("AX1-215", "A look uses a MIDI note that a fixture or another look already uses. Give the look its own note."),
         ("AX1-301", "Core MIDI couldn’t start. Reconnect the controller or restart the app."),
         ("AX1-302", "The app couldn’t open a Core MIDI input port. Restart the app and check Audio MIDI Setup."),
         ("AX1-303", "The MIDI source is no longer available. Choose a connected source."),

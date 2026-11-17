@@ -174,6 +174,9 @@ private struct NoteKey: Hashable {
             try updated.validated(requireHost: false)
             stopDemo()
             clearNotes()
+            if let look = engine.activeLook, !updated.looks.contains(where: { $0.id == look }) {
+                engine.selectLook(nil)
+            }
             config = updated
             persist()
             return true
@@ -231,6 +234,13 @@ private struct NoteKey: Hashable {
                 learning = nil
                 return
             }
+            if velocity > 0, let look = config.look(forNote: note) {
+                guard !demo else { return }
+                engine.selectLook(look.id)
+                recent = "CH \(channel)  ·  LOOK  ·  \(look.name)"
+                if activeMode == .usb && !usbStarting { tick() }
+                return
+            }
             guard !engine.blackout, !demo, !usbStarting,
                   config.fixtures.contains(where: { $0.enabled && $0.noteRange.contains(Int(note)) }) else { return }
             midiStarts[NoteKey(channel: channel, note: note)] = DispatchTime.now().uptimeNanoseconds
@@ -244,7 +254,9 @@ private struct NoteKey: Hashable {
                 midiStarts = midiStarts.filter { $0.key.channel != channel }
             }
             engine.controlChange(control, value: value, config: config, channel: channel)
-            if Int(control) == config.masterCC { recent = "CH \(channel)  ·  CC \(control)  ·  \(value)" }
+            if Int(control) == config.masterCC || config.fixtures.contains(where: { $0.levelCC == Int(control) }) {
+                recent = "CH \(channel)  ·  CC \(control)  ·  \(value)"
+            }
             if activeMode == .usb && !usbStarting { tick() }
         }
     }
@@ -280,6 +292,13 @@ private struct NoteKey: Hashable {
         }
         recent = "PAD  ·  NOTE \(fixture.note)"
         if activeMode == .usb { tick() }
+    }
+
+    /// Picks a look from the console, the same as playing its note. Nil returns fixtures to their patch settings.
+    func selectLook(_ id: UUID?) {
+        engine.selectLook(id)
+        recent = id.flatMap { id in config.looks.first { $0.id == id } }.map { "LOOK  ·  \($0.name)" } ?? "LOOK  ·  PATCH SETTINGS"
+        if activeMode == .usb && !usbStarting { tick() }
     }
 
     func setMaster(_ value: UInt8) {

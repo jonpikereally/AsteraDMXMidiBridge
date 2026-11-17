@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.0 (build 6) · 2026-11-17
+
+- Added **Looks**. A look is a MIDI note with a colour and Effect Mode settings. Playing its note switches every fixture that has **Follows looks** turned on, until the next look note. Edit looks on the **Fixture patch** page and pick one from **Look** on the console.
+- Added a **Level CC** per fixture. The CC sets the fixture's level (0–127) without holding a note, so a DAW can fade tubes with a CC envelope. The dimmer uses the held note or the CC, whichever is higher, scaled by the master. CC 120 and 123 reset level CCs to 0 as well as releasing notes.
+- Patch files are now version 2 and include looks and level CCs. Version 1 patches still import. Error codes AX1-214 and AX1-215 cover invalid level CCs and look notes.
+
 ## 1.4.0 (build 5) · 2026-11-17
 
 - Added **Install and relaunch** to the update banner. The app downloads the release's `AsteraDMXMidiBridge.zip` from GitHub, checks the bundle identifier, version and code signature, replaces itself and reopens. Error codes AX1-408 to AX1-415 cover failed installs. **View release** still opens the release page for a manual install.
