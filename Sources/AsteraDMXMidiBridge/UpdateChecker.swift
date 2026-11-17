@@ -1,3 +1,4 @@
+import AX1Core
 import Foundation
 
 enum UpdateChecker {
@@ -6,13 +7,13 @@ enum UpdateChecker {
 
     enum CheckResult: Equatable, Sendable {
         case current(latest: String)
-        case available(version: String)
+        case available(version: String, download: URL?)
         case noRelease
     }
 
     static func check(currentVersion: String) async throws -> CheckResult {
         try Task.checkCancellation()
-        guard let installed = Version(currentVersion) else { throw CheckError.invalidInstalledVersion }
+        guard let installed = ReleaseVersion(currentVersion) else { throw CheckError.invalidInstalledVersion }
 
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 8
@@ -43,7 +44,7 @@ enum UpdateChecker {
         return try evaluate(data: result.0, response: result.1, installed: installed)
     }
 
-    private static func evaluate(data: Data, response: URLResponse, installed: Version) throws -> CheckResult {
+    private static func evaluate(data: Data, response: URLResponse, installed: ReleaseVersion) throws -> CheckResult {
         guard let response = response as? HTTPURLResponse else { throw CheckError.unexpectedResponse(nil) }
         switch response.statusCode {
         case 200:
@@ -60,53 +61,33 @@ enum UpdateChecker {
         }
 
         guard let release = try? JSONDecoder().decode(Release.self, from: data),
-              !release.draft, !release.prerelease, let latest = Version(release.tagName) else {
+              !release.draft, !release.prerelease, let latest = ReleaseVersion(release.tagName) else {
             throw CheckError.invalidRelease
         }
-        return installed < latest ? .available(version: latest.text) : .current(latest: latest.text)
+        guard installed < latest else { return .current(latest: latest.text) }
+        let download = AppUpdate.downloadURL(assets: (release.assets ?? []).map { (name: $0.name, url: $0.browserDownloadURL) })
+        return .available(version: latest.text, download: download)
     }
 
     private struct Release: Decodable {
         let tagName: String
         let draft: Bool
         let prerelease: Bool
+        let assets: [Asset]?
 
         enum CodingKeys: String, CodingKey {
             case tagName = "tag_name"
-            case draft, prerelease
+            case draft, prerelease, assets
         }
     }
 
-    private struct Version: Comparable {
-        let numbers: [Int]
+    private struct Asset: Decodable {
+        let name: String
+        let browserDownloadURL: String
 
-        init?(_ tag: String) {
-            let version = (tag.first == "v" || tag.first == "V") ? tag.dropFirst() : tag[...]
-            let parts = version.split(separator: "+", omittingEmptySubsequences: false)
-            guard let main = parts.first, parts.count <= 2 else { return nil }
-            if let build = parts.dropFirst().first {
-                let identifiers = build.split(separator: ".", omittingEmptySubsequences: false)
-                guard !identifiers.isEmpty, identifiers.allSatisfy({ identifier in
-                    !identifier.isEmpty && identifier.utf8.allSatisfy { byte in
-                        (48...57).contains(byte) || (65...90).contains(byte) || (97...122).contains(byte) || byte == 45
-                    }
-                }) else { return nil }
-            }
-
-            let components = main.split(separator: ".", omittingEmptySubsequences: false)
-            guard (1...3).contains(components.count) else { return nil }
-            let numbers = components.compactMap { component -> Int? in
-                guard !component.isEmpty, component.utf8.allSatisfy({ (48...57).contains($0) }) else { return nil }
-                return Int(component)
-            }
-            guard numbers.count == components.count else { return nil }
-            self.numbers = numbers + Array(repeating: 0, count: 3 - numbers.count)
-        }
-
-        var text: String { numbers.map(String.init).joined(separator: ".") }
-
-        static func < (lhs: Version, rhs: Version) -> Bool {
-            lhs.numbers.lexicographicallyPrecedes(rhs.numbers)
+        enum CodingKeys: String, CodingKey {
+            case name
+            case browserDownloadURL = "browser_download_url"
         }
     }
 

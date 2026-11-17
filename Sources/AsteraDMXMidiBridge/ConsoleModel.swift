@@ -21,12 +21,14 @@ struct ConsoleIssue: Identifiable {
 enum UpdateStatus {
     case checking
     case checked(UpdateChecker.CheckResult)
+    case installing(String)
 
     var message: String {
         switch self {
         case .checking: return "Checking GitHub for updates…"
+        case .installing(let version): return "Downloading and installing version \(version)…"
         case .checked(.current): return "You have the latest available version."
-        case .checked(.available(let version)): return "Version \(version) is available."
+        case .checked(.available(let version, _)): return "Version \(version) is available."
         case .checked(.noRelease): return "There are no published releases yet."
         }
     }
@@ -425,7 +427,7 @@ private struct NoteKey: Hashable {
 
     func checkForUpdates() {
         guard updateTask == nil else { return }
-        if issue?.message.hasPrefix("AX1-40") == true { dismissError() }
+        if issue?.message.hasPrefix("AX1-4") == true { dismissError() }
         updateStatus = .checking
         updateTask = Task { [weak self] in
             guard let self else { return }
@@ -444,6 +446,42 @@ private struct NoteKey: Hashable {
     }
 
     func dismissUpdateStatus() { updateStatus = nil }
+
+    /// Downloads the available release, replaces this app with it and relaunches.
+    /// Quitting goes through prepareToQuit, so live output is disarmed and blacked out first.
+    func installUpdate() {
+        guard updateTask == nil, case .checked(.available(let version, let download)) = updateStatus else { return }
+        if issue?.message.hasPrefix("AX1-4") == true { dismissError() }
+        guard let download else {
+            report(UpdateInstaller.InstallError.noDownload.localizedDescription)
+            return
+        }
+        let available = UpdateStatus.checked(.available(version: version, download: download))
+        updateStatus = .installing(version)
+        updateTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let app = try await UpdateInstaller.install(version: version, from: download, installed: BuildInfo.version)
+                self.updateTask = nil
+                do {
+                    try UpdateInstaller.relaunch(app, version: version)
+                } catch {
+                    // The new version is already on disk; it opens next time the app starts.
+                    self.updateStatus = nil
+                    self.report(error.localizedDescription)
+                    return
+                }
+                NSApp.terminate(nil)
+            } catch is CancellationError {
+                self.updateTask = nil
+                self.updateStatus = available
+            } catch {
+                self.updateTask = nil
+                self.updateStatus = available
+                self.report(error.localizedDescription)
+            }
+        }
+    }
 
     func openReleasePage() {
         if !NSWorkspace.shared.open(UpdateChecker.releasesURL) {

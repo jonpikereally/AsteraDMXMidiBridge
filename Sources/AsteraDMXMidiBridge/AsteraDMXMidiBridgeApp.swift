@@ -605,7 +605,13 @@ struct ConsoleView: View {
             Spacer()
             if update.hasUpdate {
                 Button("View release") { model.openReleasePage() }
-                    .buttonStyle(ConsoleButton(color: accent))
+                    .buttonStyle(ConsoleButton(color: muted))
+                Button("Install and relaunch") { model.installUpdate() }
+                    .buttonStyle(ConsoleButton(color: accent, filled: true))
+                    .help("Download the update, replace this app and reopen it. Live output stops while the app restarts.")
+            }
+            if case .installing = update {
+                ProgressView().controlSize(.small)
             }
             if case .checked = update {
                 Button { model.dismissUpdateStatus() } label: { Image(systemName: "xmark") }
@@ -772,6 +778,14 @@ private enum BridgeErrors {
         ("AX1-404", "GitHub is limiting update checks. Wait before trying again."),
         ("AX1-405", "GitHub returned an unexpected response. Try again later or open the project’s Releases page."),
         ("AX1-406", "The latest release has an unrecognized version. Check the project’s Releases page."),
-        ("AX1-407", "The app could not open your browser. Visit the project’s Releases page from a browser.")
+        ("AX1-407", "The app could not open your browser. Visit the project’s Releases page from a browser."),
+        ("AX1-408", "The release has no app download. Click View release and download it manually."),
+        ("AX1-409", "This copy can’t update itself. Move AsteraDMXMidiBridge to Applications, open it from there and try again."),
+        ("AX1-410", "You can’t write to the app’s folder. Use View release to install the update manually."),
+        ("AX1-411", "The update couldn’t be downloaded. Check your internet connection and try again."),
+        ("AX1-412", "The downloaded update couldn’t be unpacked. Try again, or use View release."),
+        ("AX1-413", "The downloaded update failed its checks and wasn’t installed. Use View release and report the problem."),
+        ("AX1-414", "The app couldn’t be replaced, so your version is unchanged. Use View release to install manually."),
+        ("AX1-415", "The update is installed but the app couldn’t restart itself. Quit and open the app again.")
     ]
 }

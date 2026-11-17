@@ -68,3 +68,11 @@ Find the code shown in the app below. The same reference is under **Error list**
 | `AX1-405` | GitHub returned an unexpected response | Try again later and check GitHub Releases manually if it repeats. |
 | `AX1-406` | The release did not have a stable version the app could read | Check the releases page for a stable version with a version tag such as `v1.2.0`. |
 | `AX1-407` | The app could not open your browser | Open the [GitHub Releases page](https://github.com/jonpikereally/AsteraDMXMidiBridge/releases) in a browser. |
+| `AX1-408` | The release has no app download | Click **View release** and download `AsteraDMXMidiBridge.zip` manually, if it is there. |
+| `AX1-409` | This copy can’t update itself | The app is a development build or macOS is running it from a temporary location. Move `AsteraDMXMidiBridge.app` to Applications, open it from there and try again. |
+| `AX1-410` | You can’t write to the app’s folder | Move the app to a folder you own, such as Applications on your own Mac, or click **View release** and install manually. |
+| `AX1-411` | The update couldn’t be downloaded | Check your internet connection and try again. |
+| `AX1-412` | The downloaded update couldn’t be unpacked | Try again. If it repeats, click **View release** and install manually. |
+| `AX1-413` | The downloaded update failed its checks | The app wasn’t changed. The download wasn’t AsteraDMXMidiBridge, wasn’t the expected newer version, or had a broken code signature. Install manually from **View release** and report the message. |
+| `AX1-414` | The app couldn’t be replaced | Your current version is unchanged. Quit any other copy of the app, then try again or install manually from **View release**. |
+| `AX1-415` | The update is installed but the app couldn’t restart | Quit AsteraDMXMidiBridge and open it again. |

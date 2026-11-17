@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.0 (build 5) · 2026-11-17
+
+- Added **Install and relaunch** to the update banner. The app downloads the release's `AsteraDMXMidiBridge.zip` from GitHub, checks the bundle identifier, version and code signature, replaces itself and reopens. Error codes AX1-408 to AX1-415 cover failed installs. **View release** still opens the release page for a manual install.
+
 ## 1.3.0 (build 4) · 2026-11-17
 
 - Added Astera profile **16 · Effect Mode RGB** (21 channels). Pick a built-in program, strobe, speed, crossfade, direction, size, offset, restart and four colours per tube. The MIDI note and master level drive the dimmer.
