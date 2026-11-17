@@ -59,7 +59,7 @@ Find the code shown in the app below. The same reference is under **Error list**
 | --- | --- | --- |
 | `AX1-401` | Installed app version is unreadable | Replace the app with a packaged build from [GitHub Releases](https://github.com/jonpikereally/AsteraDMXMidiBridge/releases). |
 | `AX1-402` | GitHub could not be reached | Check your internet connection and retry. You can also open GitHub Releases manually. |
-| `AX1-403` | Update check timed out | Retry from **Help → Check for Updates**, or open GitHub Releases manually. |
+| `AX1-403` | Update check timed out | Retry from **AsteraDMXMidiBridge → Check for Updates**, or open GitHub Releases manually. |
 | `AX1-404` | GitHub rate limited the check | Wait and retry, or open GitHub Releases manually. |
 | `AX1-405` | GitHub returned an unexpected response | Try again later and check GitHub Releases manually if it repeats. |
 | `AX1-406` | The release did not have a stable version the app could read | Check the releases page for a stable version with a version tag such as `v1.2.0`. |

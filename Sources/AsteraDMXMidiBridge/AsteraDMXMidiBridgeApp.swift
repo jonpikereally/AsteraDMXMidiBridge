@@ -27,7 +27,7 @@ struct AsteraDMXMidiBridgeApp: App {
         .windowResizability(.contentMinSize)
         .commands {
             CommandGroup(replacing: .newItem) {}
-            CommandGroup(after: .help) {
+            CommandGroup(after: .appInfo) {
                 Button("Check for Updates…") { model.checkForUpdates() }
             }
             CommandMenu("Output") {

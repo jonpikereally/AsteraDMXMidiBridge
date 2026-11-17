@@ -12,7 +12,7 @@ AsteraDMXMidiBridge turns MIDI notes into live DMX for up to eight Astera AX1 or
 
 The app is signed ad hoc for local use. If Gatekeeper asks you to approve it after the first launch attempt, see [Apple’s instructions for opening an app from an unidentified developer](https://support.apple.com/en-us/102445).
 
-Choose **Help → Check for Updates** to check the latest stable public GitHub release. If an update is available, open its release page, download the new ZIP, quit the app, and replace the old copy. The app checks when you ask and leaves installation to you. The console footer shows the installed version, build number, and build time.
+Choose **AsteraDMXMidiBridge → Check for Updates** to check the latest stable public GitHub release. If an update is available, open its release page, download the new ZIP, quit the app, and replace the old copy. The app checks when you ask and leaves installation to you. The console footer shows the installed version, build number, and build time.
 
 ## Connect the ENTTEC and ART7
 
