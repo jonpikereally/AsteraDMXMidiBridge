@@ -1,0 +1,55 @@
+name: Release
+
+# Builds the signed app bundle on macOS and publishes it as a GitHub Release
+# whenever a version tag (for example v1.3.0) is pushed. The in-app
+# Check for Updates reads the latest stable release created here.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check the tag matches main and the app version
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "::error::$tag is not on main"; exit 1; }
+          app_version=$(sed -n '/CFBundleShortVersionString/{n;s/.*<string>\(.*\)<\/string>.*/\1/p;}' Scripts/package-app.zsh)
+          [ "$app_version" = "$version" ] || { echo "::error::Tag $tag does not match app version $app_version"; exit 1; }
+          grep -q "^## $version " CHANGELOG.md || { echo "::error::CHANGELOG.md has no section for $version"; exit 1; }
+
+      - name: Run Swift tests
+        run: swift test
+
+      - name: Package the app
+        run: zsh Scripts/package-app.zsh "$RUNNER_TEMP/AsteraDMXMidiBridge.zip"
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          awk -v v="$version" '$0 ~ "^## " v " " {on=1; next} /^## / {on=0} on' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+          {
+            echo
+            echo "Download \`AsteraDMXMidiBridge.zip\`, unzip it, quit the running app and replace your copy. Requires an Apple silicon Mac with macOS 13 or later. Your fixture patch and MIDI settings carry over."
+          } >> "$RUNNER_TEMP/notes.md"
+          gh release create "$tag" "$RUNNER_TEMP/AsteraDMXMidiBridge.zip" \
+            --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "AsteraDMXMidiBridge $version" --notes-file "$RUNNER_TEMP/notes.md"
