@@ -186,6 +186,7 @@ struct ConsoleView: View {
                         .foregroundStyle(muted)
                 }.font(.system(size: 12))
                 .padding(.top, 3)
+                maxPanel
             }
             .frame(maxWidth: .infinity, alignment: .topLeading)
             rack.frame(width: 300)
@@ -195,7 +196,8 @@ struct ConsoleView: View {
 
     private func fixtureCard(_ fixture: FixturePatch, index: Int) -> some View {
         let velocity = (0..<fixture.noteCount).map { model.engine.level(of: fixture, pixel: $0) }.max() ?? 0
-        let level = fixture.enabled && !model.engine.blackout ? (Double(velocity) / 127) * (Double(model.engine.master) / 127) : 0
+        let level = fixture.enabled && !model.engine.blackout
+            ? (Double(velocity) / 127) * (Double(model.engine.master) / 127) * model.config.limit(of: fixture) : 0
         var shown = fixture
         shown.color = model.engine.appearance(of: fixture, config: model.config).color
         let tint = fixtureColor(shown)
@@ -237,6 +239,56 @@ struct ConsoleView: View {
         .accessibilityLabel(fixture.name)
         .accessibilityValue(level > 0 ? "Lit" : "Off")
         .help("Latch \(fixture.name) at full velocity, or click again to release.")
+    }
+
+    private var maxPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                sectionTitle("Maximum brightness", icon: "sun.max")
+                Text("Caps each light. A light in a group is scaled by both, e.g. 80% × 50% = 40%. Works while output is armed.")
+                    .font(.system(size: 11)).foregroundStyle(muted)
+            }
+            if !model.config.groups.isEmpty {
+                label("GROUPS", color: muted)
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 160), spacing: 14), count: 3), spacing: 8) {
+                    ForEach(model.config.groups) { group in
+                        maxSlider(group.name.isEmpty ? "Group" : group.name, value: Int(group.maxLevel),
+                                  detail: "\(group.fixtureIDs.filter { id in model.config.fixtures.contains { $0.id == id } }.count) lights") {
+                            model.setGroupMax(group.id, $0)
+                        }
+                    }
+                }
+            }
+            label("LIGHTS", color: muted)
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 120), spacing: 14), count: 4), spacing: 8) {
+                ForEach(model.config.fixtures) { fixture in
+                    let total = Int((model.config.limit(of: fixture) * 100).rounded())
+                    maxSlider(fixture.name.isEmpty ? "Light" : fixture.name, value: Int(fixture.maxLevel),
+                              detail: total == Int(fixture.maxLevel) ? nil : "\(total)% with groups") {
+                        model.setFixtureMax(fixture.id, $0)
+                    }
+                    .opacity(fixture.enabled ? 1 : 0.5)
+                }
+            }
+            if model.config.groups.isEmpty {
+                Text("Make groups on the Fixture patch page.").font(.system(size: 11)).foregroundStyle(muted)
+            }
+        }
+        .padding(13).rackPanel()
+        .padding(.top, 6)
+    }
+
+    private func maxSlider(_ title: String, value: Int, detail: String?, set: @escaping (Int) -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack {
+                Text(title).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                Spacer()
+                label("\(value)%", color: value < 100 ? accent : muted)
+            }
+            Slider(value: Binding(get: { Double(value) }, set: { set(Int($0.rounded())) }), in: 0...100, step: 1)
+                .accessibilityLabel("\(title) maximum brightness")
+            if let detail { label(detail.uppercased(), color: muted) }
+        }
     }
 
     private var rack: some View {
@@ -385,6 +437,7 @@ struct ConsoleView: View {
                     if index != edit.fixtures.indices.last { Divider().overlay(edge.opacity(0.6)) }
                 }
             }.rackPanel().disabled(model.live)
+            groupsEditor
             looksEditor
             Text("For 16-pixel RGB, All pixels mirrors one note across the tube. Note per pixel uses 16 consecutive MIDI notes, starting at the note shown. Effect Mode RGB runs Astera’s built-in programs on the tube: its note and the master level set the dimmer, and the program settings are sent continuously.")
                 .foregroundStyle(muted).font(.system(size: 12))
@@ -576,6 +629,61 @@ struct ConsoleView: View {
             }
         }
         .padding(.leading, 54).padding(.trailing, 14).padding(.bottom, 12)
+    }
+
+    private var groupsEditor: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                sectionTitle("Groups", icon: "square.stack.3d.up")
+                Text("Pick the lights in each group. Set each group's maximum brightness on the Console.")
+                    .font(.system(size: 12)).foregroundStyle(muted)
+                Spacer()
+                Button { edit.groups.append(FixtureGroup(name: "Group \(edit.groups.count + 1)")) } label: {
+                    Label("Add group", systemImage: "plus")
+                }.buttonStyle(ConsoleButton(color: muted))
+            }
+            .padding(.horizontal, 14).padding(.vertical, 11)
+            .background(recess.opacity(0.72))
+            ForEach(Array(edit.groups.indices), id: \.self) { index in
+                groupRow(index)
+                if index != edit.groups.indices.last { Divider().overlay(edge.opacity(0.6)) }
+            }
+        }.rackPanel().disabled(model.live)
+    }
+
+    private func groupRow(_ index: Int) -> some View {
+        let group = edit.groups[index]
+        return HStack(alignment: .center, spacing: 12) {
+            TextField("Group name", text: $edit.groups[index].name)
+                .accessibilityLabel("Group \(index + 1) name")
+                .frame(width: 160)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(edit.fixtures) { fixture in
+                        let member = group.fixtureIDs.contains(fixture.id)
+                        Button {
+                            if member { edit.groups[index].fixtureIDs.removeAll { $0 == fixture.id } }
+                            else { edit.groups[index].fixtureIDs.append(fixture.id) }
+                        } label: {
+                            Text(fixture.name.isEmpty ? "Light" : fixture.name)
+                                .font(.system(size: 11, weight: .semibold))
+                                .padding(.horizontal, 9).padding(.vertical, 5)
+                                .foregroundStyle(member ? bg : muted)
+                                .background(member ? accent : recess, in: Capsule())
+                                .overlay { Capsule().strokeBorder(member ? accent : edge) }
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("\(fixture.name) in \(group.name)")
+                        .accessibilityValue(member ? "In group" : "Not in group")
+                    }
+                }
+            }
+            label("MAX \(group.maxLevel)%", color: muted).frame(width: 70, alignment: .trailing)
+            Button { edit.groups.remove(at: index) } label: { Image(systemName: "trash") }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Delete group \(group.name)")
+        }
+        .padding(.horizontal, 14).padding(.vertical, 9)
     }
 
     private var looksEditor: some View {

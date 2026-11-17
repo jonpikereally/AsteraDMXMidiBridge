@@ -296,4 +296,48 @@ final class AX1CoreTests: XCTestCase {
         XCTAssertNil(old.fixtures[0].levelCC)
         XCTAssertTrue(old.fixtures[0].followsLooks)
     }
+
+    func testFixtureAndGroupMaximumsScaleOutput() throws {
+        var config = effectRig()
+        var engine = LightingEngine()
+        engine.controlChange(20, value: 127, config: config)
+        engine.controlChange(21, value: 127, config: config)
+        XCTAssertEqual(engine.frame(config: config)[0], 255)
+
+        config.fixtures[0].maxLevel = 50
+        XCTAssertEqual(engine.frame(config: config)[0], 127)   // halves round down, like the master
+        config.groups = [FixtureGroup(name: "Stage", fixtureIDs: [config.fixtures[0].id], maxLevel: 50)]
+        XCTAssertEqual(config.limit(of: config.fixtures[0]), 0.25, accuracy: 1e-9)
+        var frame = engine.frame(config: config)
+        XCTAssertEqual(frame[0], 64)
+        XCTAssertEqual(frame[21], 255)                       // the front fixture isn't in the group
+        XCTAssertEqual(Array(frame[9...11]), [255, 73, 59])  // effect colours aren't dimmed, only the dimmer
+
+        // a fixture in two groups gets both
+        config.groups.append(FixtureGroup(name: "All", fixtureIDs: config.fixtures.map(\.id), maxLevel: 40))
+        frame = engine.frame(config: config)
+        XCTAssertEqual(frame[0], 25)
+        XCTAssertEqual(frame[21], 102)
+
+        // RGB profiles scale the colour
+        var rgb = BridgeConfig.defaults
+        rgb.fixtures[0].maxLevel = 50
+        var e2 = LightingEngine()
+        e2.noteOn(36, velocity: 127)
+        XCTAssertEqual(Array(e2.frame(config: rgb)[0...2]), [127, 36, 29])
+    }
+
+    func testGroupsAndMaximumsRoundTripAndOldPatchesDefaultToFull() throws {
+        var config = effectRig()
+        config.fixtures[1].maxLevel = 70
+        config.groups = [FixtureGroup(name: "Front", fixtureIDs: [config.fixtures[1].id], maxLevel: 30)]
+        let imported = try PatchFile.load(try PatchFile.export(config), into: .defaults)
+        XCTAssertEqual(imported.groups, config.groups)
+        XCTAssertEqual(imported.fixtures[1].maxLevel, 70)
+
+        let v2 = #"{"format":"AsteraDMXMidiBridge.patch","version":2,"midiChannel":0,"masterCC":7,"fixtures":[{"id":"6A1F0E2C-1B3D-4C51-9A01-0000000000A1","name":"AX1 1","address":1,"note":36,"color":{"r":1,"g":2,"b":3},"enabled":true,"maxLevel":180}]}"#
+        let old = try PatchFile.load(Data(v2.utf8), into: .defaults)
+        XCTAssertEqual(old.groups, [])
+        XCTAssertEqual(old.fixtures[0].maxLevel, 100)        // out-of-range values are capped
+    }
 }

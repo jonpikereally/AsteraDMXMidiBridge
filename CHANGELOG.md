@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.6.0 (build 7) · 2026-11-17
+
+- Added **Maximum brightness** for each light, on the Console under the fixture deck. It scales everything the light outputs and works while output is armed.
+- Added **Groups** on the Fixture patch page. A group has its own maximum brightness on the Console. A light can be in several groups; its output is scaled by its own maximum and every group's, so 80% in a 50% group peaks at 40%.
+- Patch files are now version 3 and include maximums and groups. Older patches still import, with every maximum at 100%.
+
 ## 1.5.0 (build 6) · 2026-11-17
 
 - Added **Looks**. A look is a MIDI note with a colour and Effect Mode settings. Playing its note switches every fixture that has **Follows looks** turned on, until the next look note. Edit looks on the **Fixture patch** page and pick one from **Look** on the console.

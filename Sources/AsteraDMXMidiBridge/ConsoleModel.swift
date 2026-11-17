@@ -301,6 +301,22 @@ private struct NoteKey: Hashable {
         if activeMode == .usb && !usbStarting { tick() }
     }
 
+    /// Maximum brightness for one fixture (0–100 %). Works while output is armed and is saved straight away.
+    func setFixtureMax(_ id: UUID, _ value: Int) {
+        guard let index = config.fixtures.firstIndex(where: { $0.id == id }) else { return }
+        config.fixtures[index].maxLevel = UInt8(clamping: min(100, max(0, value)))
+        persist()
+        if activeMode == .usb && !usbStarting { tick() }
+    }
+
+    /// Maximum brightness for a group (0–100 %). Works while output is armed and is saved straight away.
+    func setGroupMax(_ id: UUID, _ value: Int) {
+        guard let index = config.groups.firstIndex(where: { $0.id == id }) else { return }
+        config.groups[index].maxLevel = UInt8(clamping: min(100, max(0, value)))
+        persist()
+        if activeMode == .usb && !usbStarting { tick() }
+    }
+
     func setMaster(_ value: UInt8) {
         engine.setMaster(value)
         if activeMode == .usb && !usbStarting { tick() }

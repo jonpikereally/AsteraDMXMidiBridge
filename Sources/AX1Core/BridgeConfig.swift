@@ -19,10 +19,19 @@ public struct RGB: Codable, Equatable, Sendable {
         )
     }
 
-    static func scaledComponent(_ component: UInt8, velocity: UInt8, master: UInt8) -> UInt8 {
-        let gain = Int(min(velocity, 127)) * Int(min(master, 127))
+    public func scaled(velocity: UInt8, master: UInt8, limit: Double) -> RGB {
+        RGB(
+            Self.scaledComponent(r, velocity: velocity, master: master, limit: limit),
+            Self.scaledComponent(g, velocity: velocity, master: master, limit: limit),
+            Self.scaledComponent(b, velocity: velocity, master: master, limit: limit)
+        )
+    }
+
+    /// `limit` (0–1) is the fixture's maximum brightness after its groups.
+    static func scaledComponent(_ component: UInt8, velocity: UInt8, master: UInt8, limit: Double = 1) -> UInt8 {
+        let gain = Double(min(velocity, 127)) * Double(min(master, 127)) * min(1, max(0, limit))
         let full = 127 * 127
-        return UInt8((Int(component) * gain + full / 2) / full)
+        return UInt8(min(255, ((Double(component) * gain + Double(full / 2)) / Double(full)).rounded(.down)))
     }
 }
 
@@ -43,6 +52,8 @@ public struct FixturePatch: Codable, Equatable, Identifiable, Sendable {
     /// A MIDI CC (0–119) that sets this fixture's level, or nil for notes only.
     /// The dimmer uses whichever is higher: the held note's velocity or the CC value.
     public var levelCC: Int?
+    /// Maximum brightness, 0–100 percent. Scales everything this fixture outputs.
+    public var maxLevel: UInt8
 
     public var noteCount: Int { independentPixels ? profile.pixelCount : 1 }
     public var maximumBaseNote: Int { 128 - noteCount }
@@ -51,7 +62,7 @@ public struct FixturePatch: Codable, Equatable, Identifiable, Sendable {
     public init(
         id: UUID = UUID(), name: String, address: Int, note: UInt8, color: RGB, enabled: Bool = true,
         profile: AX1Profile = .rgb, white: UInt8 = 0, independentPixels: Bool = false,
-        effect: EffectSettings = EffectSettings(), followsLooks: Bool = true, levelCC: Int? = nil
+        effect: EffectSettings = EffectSettings(), followsLooks: Bool = true, levelCC: Int? = nil, maxLevel: UInt8 = 100
     ) {
         self.id = id
         self.name = name
@@ -65,10 +76,11 @@ public struct FixturePatch: Codable, Equatable, Identifiable, Sendable {
         self.effect = effect
         self.followsLooks = followsLooks
         self.levelCC = levelCC
+        self.maxLevel = min(maxLevel, 100)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, address, note, color, enabled, profile, white, independentPixels, effect, followsLooks, levelCC
+        case id, name, address, note, color, enabled, profile, white, independentPixels, effect, followsLooks, levelCC, maxLevel
     }
 
     public init(from decoder: Decoder) throws {
@@ -85,7 +97,8 @@ public struct FixturePatch: Codable, Equatable, Identifiable, Sendable {
             independentPixels: try values.decodeIfPresent(Bool.self, forKey: .independentPixels) ?? false,
             effect: try values.decodeIfPresent(EffectSettings.self, forKey: .effect) ?? EffectSettings(),
             followsLooks: try values.decodeIfPresent(Bool.self, forKey: .followsLooks) ?? true,
-            levelCC: try values.decodeIfPresent(Int.self, forKey: .levelCC)
+            levelCC: try values.decodeIfPresent(Int.self, forKey: .levelCC),
+            maxLevel: min(try values.decodeIfPresent(UInt8.self, forKey: .maxLevel) ?? 100, 100)
         )
     }
 }
@@ -97,18 +110,21 @@ public struct BridgeConfig: Codable, Equatable, Sendable {
     public var masterCC: Int
     public var fixtures: [FixturePatch]
     public var looks: [Look]
+    public var groups: [FixtureGroup]
 
-    public init(host: String, universe: Int, midiChannel: Int, masterCC: Int, fixtures: [FixturePatch], looks: [Look] = []) {
+    public init(host: String, universe: Int, midiChannel: Int, masterCC: Int, fixtures: [FixturePatch], looks: [Look] = [],
+                groups: [FixtureGroup] = []) {
         self.host = host
         self.universe = universe
         self.midiChannel = midiChannel
         self.masterCC = masterCC
         self.fixtures = fixtures
         self.looks = looks
+        self.groups = groups
     }
 
     private enum CodingKeys: String, CodingKey {
-        case host, universe, midiChannel, masterCC, fixtures, looks
+        case host, universe, midiChannel, masterCC, fixtures, looks, groups
     }
 
     public init(from decoder: Decoder) throws {
@@ -119,8 +135,15 @@ public struct BridgeConfig: Codable, Equatable, Sendable {
             midiChannel: try values.decode(Int.self, forKey: .midiChannel),
             masterCC: try values.decode(Int.self, forKey: .masterCC),
             fixtures: try values.decode([FixturePatch].self, forKey: .fixtures),
-            looks: try values.decodeIfPresent([Look].self, forKey: .looks) ?? []
+            looks: try values.decodeIfPresent([Look].self, forKey: .looks) ?? [],
+            groups: try values.decodeIfPresent([FixtureGroup].self, forKey: .groups) ?? []
         )
+    }
+
+    /// A fixture's maximum brightness (0–1): its own maximum times that of every group it is in.
+    public func limit(of fixture: FixturePatch) -> Double {
+        groups.filter { $0.fixtureIDs.contains(fixture.id) }
+            .reduce(Double(fixture.maxLevel) / 100) { $0 * Double($1.maxLevel) / 100 }
     }
 
     /// The look a note switches to, if any.

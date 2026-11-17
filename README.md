@@ -79,9 +79,17 @@ Use these to run a show from a DAW without holding notes.
 
 Looks and level CCs are saved in exported patch files.
 
+## Maximum brightness and groups
+
+- **Per light:** on the **Console**, under the fixture deck, each light has a **Maximum brightness** slider (0–100%). It scales everything the light outputs: the dimmer for Effect Mode and dimmer profiles, and the colour for the RGB profiles. Move it while output is armed; it’s saved straight away.
+- **Groups:** on the **Fixture patch** page, under **Groups**, click **Add group**, name it, and click the lights that belong to it. Click **Apply patch**. Each group then gets its own slider on the Console. A light can be in several groups.
+- **How they combine:** a light’s output is its level × the master × its own maximum × the maximum of every group it’s in. For example, a light at 80% in a group at 50% peaks at 40%.
+
+Maximums and groups are saved in exported patch files.
+
 ## Save and share patches
 
-On **Fixture patch**, click **Export…** to save the patch shown, including every fixture’s profile, address, note, level CC, colours and effect settings, the looks, plus the MIDI channel and master CC, as a `.json` file. Click **Import…** to load one into the editor, check it, and click **Apply patch** to use it. Imports leave your output method, Art-Net address and universe unchanged. If an import or export fails, the error code is listed in the [error list](docs/error-list.md).
+On **Fixture patch**, click **Export…** to save the patch shown, including every fixture’s profile, address, note, level CC, maximum brightness, colours and effect settings, the looks and groups, plus the MIDI channel and master CC, as a `.json` file. Click **Import…** to load one into the editor, check it, and click **Apply patch** to use it. Imports leave your output method, Art-Net address and universe unchanged. If an import or export fails, the error code is listed in the [error list](docs/error-list.md).
 
 ## QLC+ fallback with the same ENTTEC
 

@@ -100,12 +100,13 @@ public struct LightingEngine: Sendable {
                   Int(fixture.note) <= fixture.maximumBaseNote else { continue }
 
             let look = appearance(of: fixture, config: config)
+            let limit = config.limit(of: fixture)
             if profile.isEffect {
                 // Effect settings are sent continuously so the program keeps running;
                 // the note or level CC only opens the dimmer on channel 1.
                 let start = fixture.address - 1
                 let velocity = level(of: fixture, notes: active)
-                slots[start] = velocity > 0 ? RGB.scaledComponent(255, velocity: velocity, master: master) : 0
+                slots[start] = velocity > 0 ? RGB.scaledComponent(255, velocity: velocity, master: master, limit: limit) : 0
                 for (offset, value) in look.effect.slots(color1: look.color).enumerated() {
                     slots[start + 1 + offset] = value
                 }
@@ -117,17 +118,17 @@ public struct LightingEngine: Sendable {
                 guard velocity > 0 else { continue }
                 var slot = fixture.address - 1 + pixel * profile.slotsPerPixel
                 if profile.hasDimmer {
-                    slots[slot] = RGB.scaledComponent(255, velocity: velocity, master: master)
+                    slots[slot] = RGB.scaledComponent(255, velocity: velocity, master: master, limit: limit)
                     slot += 1
                 }
-                let color = profile.hasDimmer ? look.color : look.color.scaled(velocity: velocity, master: master)
+                let color = profile.hasDimmer ? look.color : look.color.scaled(velocity: velocity, master: master, limit: limit)
                 slots[slot] = color.r
                 slots[slot + 1] = color.g
                 slots[slot + 2] = color.b
                 if profile.hasWhite {
                     slots[slot + 3] = profile.hasDimmer
                         ? fixture.white
-                        : RGB.scaledComponent(fixture.white, velocity: velocity, master: master)
+                        : RGB.scaledComponent(fixture.white, velocity: velocity, master: master, limit: limit)
                 }
             }
         }
