@@ -1,0 +1,23 @@
+name: macOS CI
+
+on:
+  push:
+    branches: [main, staging]
+  pull_request:
+    branches: [main, staging]
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-build:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Run Swift tests
+        run: swift test
+      - name: Build the app in release mode
+        run: swift build --configuration release --product AsteraDMXMidiBridge

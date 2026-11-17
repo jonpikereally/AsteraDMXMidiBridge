@@ -1,0 +1,466 @@
+import AppKit
+import AX1Core
+import SwiftUI
+
+enum OutputMode: String, CaseIterable, Identifiable {
+    case artnet, usb
+    var id: Self { self }
+    var title: String {
+        switch self {
+        case .artnet: return "Art-Net"
+        case .usb: return "ENTTEC Open DMX USB"
+        }
+    }
+}
+
+struct ConsoleIssue: Identifiable {
+    let id = UUID()
+    let message: String
+}
+
+enum UpdateStatus {
+    case checking
+    case checked(UpdateChecker.CheckResult)
+
+    var message: String {
+        switch self {
+        case .checking: return "Checking GitHub for updates…"
+        case .checked(.current): return "You have the latest available version."
+        case .checked(.available(let version)): return "Version \(version) is available."
+        case .checked(.noRelease): return "There are no published releases yet."
+        }
+    }
+
+    var hasUpdate: Bool {
+        if case .checked(.available) = self { return true }
+        return false
+    }
+}
+
+struct LearnedNote: Identifiable {
+    let id = UUID()
+    let fixtureID: UUID
+    let note: UInt8
+}
+
+private struct NoteKey: Hashable {
+    let channel: Int
+    let note: UInt8
+}
+
+@MainActor final class ConsoleModel: ObservableObject {
+    @Published private(set) var config: BridgeConfig
+    @Published private(set) var engine = LightingEngine()
+    @Published private(set) var sources: [MIDISource] = []
+    @Published private(set) var sourceID: Int32?
+    @Published private(set) var live = false
+    @Published private(set) var usbStarting = false
+    @Published private(set) var usbClosing = false
+    @Published private(set) var demo = false
+    @Published private(set) var recent = "Waiting for input"
+    @Published private(set) var issue: ConsoleIssue?
+    @Published private(set) var updateStatus: UpdateStatus?
+    @Published private(set) var learned: LearnedNote?
+    @Published var learning: UUID?
+    @Published private(set) var pads: Set<UUID> = []
+    @Published private(set) var usbPorts: [String] = []
+    @Published var usbPath: String {
+        didSet { UserDefaults.standard.set(usbPath, forKey: "openDMXPath") }
+    }
+    @Published var outputMode: OutputMode {
+        didSet { UserDefaults.standard.set(outputMode.rawValue, forKey: "outputMode") }
+    }
+    @Published var host: String
+    @Published var universe: String
+
+    private let artnet = ArtNetOutput()
+    private let usb = OpenDMXOutput()
+    private var activeMode: OutputMode?
+    private var midi: MIDIInput?
+    private var timer: Timer?
+    private var demoTimer: Timer?
+    private var usbScanTimer: Timer?
+    private var quitReply: (() -> Void)?
+    private var updateTask: Task<Void, Never>?
+    private var midiStarts: [NoteKey: UInt64] = [:]
+    private var demoStep = 0
+    private var didStart = false
+
+    init(preview: Bool = false) {
+        let defaults = UserDefaults.standard
+        let decoded = defaults.data(forKey: "config.v1").flatMap { try? JSONDecoder().decode(BridgeConfig.self, from: $0) }
+        let initial = decoded.flatMap { value -> BridgeConfig? in
+            guard (try? value.validated(requireHost: false)) != nil else { return nil }
+            return value
+        } ?? .defaults
+        config = initial
+        host = initial.host
+        universe = String(initial.universe)
+        outputMode = defaults.string(forKey: "outputMode").flatMap(OutputMode.init(rawValue:)) ?? .usb
+        usbPath = defaults.string(forKey: "openDMXPath") ?? ""
+        if preview {
+            config = .defaults
+            host = ""
+            universe = "0"
+            outputMode = .usb
+        }
+    }
+
+    func start() {
+        guard !didStart else { return }
+        didStart = true
+        refreshUSB()
+        let usbScanner = Timer(timeInterval: 1.5, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshUSB() }
+        }
+        usbScanner.tolerance = 0.3
+        usbScanTimer = usbScanner
+        RunLoop.main.add(usbScanner, forMode: .common)
+        usb.onReady = { [weak self] in self?.usbStarting = false }
+        usb.onError = { [weak self] error in
+            guard let self else { return }
+            if self.activeMode == .usb { self.disarm(tryZero: false) }
+            self.report(error.localizedDescription)
+        }
+        usb.onStopped = { [weak self] in
+            guard let self else { return }
+            self.usbClosing = false
+            let finish = self.quitReply
+            self.quitReply = nil
+            finish?()
+        }
+        do {
+            let input = try MIDIInput()
+            midi = input
+            sources = input.sources
+            input.onSourcesChanged = { [weak self] sources in self?.sources = sources }
+            input.onMessage = { [weak self] event in self?.receive(event) }
+            input.onSelectionLost = { [weak self] in
+                guard let self else { return }
+                self.sourceID = nil
+                self.clearNotes()
+                self.report("AX1-104 · MIDI input disconnected. Choose a source to resume.")
+            }
+            if let saved = UserDefaults.standard.object(forKey: "midiSource") as? NSNumber,
+               sources.contains(where: { $0.id == saved.int32Value }) {
+                selectSource(saved.int32Value)
+            }
+        } catch { report(error.localizedDescription) }
+    }
+
+    func selectSource(_ id: Int32?) {
+        guard sourceID != id else { return }
+        clearNotes()
+        do {
+            try midi?.select(id)
+            sourceID = midi?.selectedSourceID
+            if let sourceID { UserDefaults.standard.set(sourceID, forKey: "midiSource") }
+            else { UserDefaults.standard.removeObject(forKey: "midiSource") }
+            recent = "Waiting for input"
+        } catch {
+            sourceID = midi?.selectedSourceID
+            report(error.localizedDescription)
+        }
+    }
+
+    func savePatch(_ next: BridgeConfig) -> Bool {
+        guard !live else { return false }
+        do {
+            var updated = next
+            updated.host = config.host
+            updated.universe = config.universe
+            try updated.validated(requireHost: false)
+            stopDemo()
+            clearNotes()
+            config = updated
+            persist()
+            return true
+        } catch {
+            report(error.localizedDescription)
+            return false
+        }
+    }
+
+    @discardableResult func saveDestination() -> Bool {
+        guard !live else { return false }
+        let cleaned = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let number = Int(universe.trimmingCharacters(in: .whitespacesAndNewlines)), (0...32767).contains(number) else {
+            report("AX1-203 · Universe must be from 0 to 32767.")
+            return false
+        }
+        do {
+            var updated = config
+            updated.host = cleaned
+            updated.universe = number
+            try updated.validated(requireHost: outputMode == .artnet)
+            config = updated
+            persist()
+            return true
+        } catch {
+            report(error.localizedDescription)
+            return false
+        }
+    }
+
+    private func persist() {
+        if let data = try? JSONEncoder().encode(config) {
+            UserDefaults.standard.set(data, forKey: "config.v1")
+        }
+    }
+
+    func clearNotes() {
+        midiStarts.removeAll()
+        engine.clearNotes()
+        pads.removeAll()
+        if activeMode == .usb && !usbStarting { tick() }
+    }
+
+    private func receive(_ event: MIDIEvent) {
+        let channel: Int
+        switch event {
+        case let .noteOn(ch, _, _), let .noteOff(ch, _), let .controlChange(ch, _, _): channel = ch
+        }
+        guard config.midiChannel == 0 || config.midiChannel == channel else { return }
+        switch event {
+        case let .noteOn(_, note, velocity):
+            recent = "CH \(channel)  ·  NOTE \(note)  ·  VEL \(velocity)"
+            if let target = learning, velocity > 0 {
+                learned = LearnedNote(fixtureID: target, note: note)
+                learning = nil
+                return
+            }
+            guard !engine.blackout, !demo, !usbStarting,
+                  config.fixtures.contains(where: { $0.enabled && $0.noteRange.contains(Int(note)) }) else { return }
+            midiStarts[NoteKey(channel: channel, note: note)] = DispatchTime.now().uptimeNanoseconds
+            engine.noteOn(note, velocity: velocity, channel: channel)
+            if activeMode == .usb { tick() }
+        case let .noteOff(_, note):
+            releaseMIDI(NoteKey(channel: channel, note: note))
+        case let .controlChange(_, control, value):
+            if demo { return }
+            if control == 120 || control == 123 {
+                midiStarts = midiStarts.filter { $0.key.channel != channel }
+            }
+            engine.controlChange(control, value: value, config: config, channel: channel)
+            if Int(control) == config.masterCC { recent = "CH \(channel)  ·  CC \(control)  ·  \(value)" }
+            if activeMode == .usb && !usbStarting { tick() }
+        }
+    }
+
+    private func releaseMIDI(_ key: NoteKey) {
+        guard let start = midiStarts[key] else { return }
+        // A rapid tap must survive at least one nominal 30 Hz output frame.
+        let deadline = start + 50_000_000
+        if DispatchTime.now().uptimeNanoseconds < deadline {
+            DispatchQueue.main.asyncAfter(deadline: DispatchTime(uptimeNanoseconds: deadline)) { [weak self] in
+                guard let self, self.midiStarts[key] == start else { return }
+                self.finishRelease(key)
+            }
+        } else {
+            finishRelease(key)
+        }
+    }
+
+    private func finishRelease(_ key: NoteKey) {
+        midiStarts[key] = nil
+        engine.noteOff(key.note, channel: key.channel)
+        if activeMode == .usb { tick() }
+    }
+
+    func tap(_ fixture: FixturePatch) {
+        guard !engine.blackout, !usbStarting, fixture.enabled else { return }
+        stopDemo()
+        if pads.remove(fixture.id) != nil {
+            for note in fixture.noteRange { engine.noteOff(UInt8(clamping: note), channel: 0) }
+        } else {
+            pads.insert(fixture.id)
+            for note in fixture.noteRange { engine.noteOn(UInt8(clamping: note), velocity: 127, channel: 0) }
+        }
+        recent = "PAD  ·  NOTE \(fixture.note)"
+        if activeMode == .usb { tick() }
+    }
+
+    func setMaster(_ value: UInt8) {
+        engine.setMaster(value)
+        if activeMode == .usb && !usbStarting { tick() }
+    }
+
+    func toggleBlackout() {
+        if !engine.blackout {
+            stopDemo()
+            clearNotes()
+        }
+        engine.setBlackout(!engine.blackout)
+        if engine.blackout && live { tick() }
+    }
+
+    func toggleDemo() {
+        guard !live else { return }
+        if demo { stopDemo(); return }
+        guard !engine.blackout else { return }
+        clearNotes()
+        demo = true
+        demoStep = 0
+        playDemoStep()
+        let timer = Timer(timeInterval: 0.30, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.playDemoStep() }
+        }
+        demoTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    private func playDemoStep() {
+        let active = config.fixtures.filter(\.enabled)
+        guard demo && !active.isEmpty else { return }
+        clearNotes()
+        for note in active[demoStep % active.count].noteRange {
+            engine.noteOn(UInt8(clamping: note), velocity: 127, channel: 0)
+        }
+        if active.count > 1 {
+            for note in active[(demoStep + active.count - 1) % active.count].noteRange {
+                engine.noteOn(UInt8(clamping: note), velocity: 34, channel: 0)
+            }
+        }
+        demoStep = (demoStep + 1) % active.count
+        recent = "PREVIEW  ·  RUNNING"
+    }
+
+    func stopDemo() {
+        guard demo else { return }
+        demoTimer?.invalidate()
+        demoTimer = nil
+        demo = false
+        clearNotes()
+        recent = "Preview stopped"
+    }
+
+    func refreshUSB() {
+        guard !live, !usbClosing, outputMode == .usb else { return }
+        let found = OpenDMXOutput.availablePorts()
+        if found != usbPorts { usbPorts = found }
+        let selection = found.contains(usbPath) ? usbPath : (found.count == 1 ? found[0] : "")
+        if selection != usbPath { usbPath = selection }
+    }
+
+    func toggleLive() {
+        if live { disarm(); return }
+        stopDemo()
+        clearNotes()
+        learning = nil
+        issue = nil
+        do {
+            try config.validated(requireHost: false)
+            switch outputMode {
+            case .artnet:
+                guard saveDestination() else { return }
+                try artnet.arm(host: config.host, universe: config.universe)
+            case .usb:
+                refreshUSB()
+                guard !usbPath.isEmpty else {
+                    report("AX1-105 · Choose your Open DMX USB interface. Reconnect it if it’s missing.")
+                    return
+                }
+                try usb.arm(path: usbPath)
+                usbStarting = true
+            }
+            activeMode = outputMode
+            live = true
+            tick()
+            guard live else { return }
+            let timer = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.tick() }
+            }
+            self.timer = timer
+            RunLoop.main.add(timer, forMode: .common)
+        } catch {
+            report(error.localizedDescription)
+        }
+    }
+
+    private func tick() {
+        guard live, let activeMode else { return }
+        do {
+            let frame = engine.frame(config: config)
+            switch activeMode {
+            case .artnet: try artnet.send(frame)
+            case .usb: try usb.send(frame)
+            }
+        } catch {
+            disarm(tryZero: false)
+            report(error.localizedDescription)
+        }
+    }
+
+    private func disarm(tryZero: Bool = true) {
+        timer?.invalidate()
+        timer = nil
+        let previous = activeMode
+        activeMode = nil
+        live = false
+        clearNotes()
+        if previous == .artnet {
+            if tryZero {
+                do { try artnet.send([UInt8](repeating: 0, count: 512)) }
+                catch { report(error.localizedDescription) }
+            }
+            artnet.disarm()
+        }
+        if previous == .usb {
+            usbStarting = false
+            usbClosing = true
+            usb.disarm(blackout: tryZero)
+        }
+    }
+
+    func prepareToQuit(_ onDrained: @escaping () -> Void) -> Bool {
+        updateTask?.cancel()
+        usbScanTimer?.invalidate()
+        usbScanTimer = nil
+        disarm()
+        stopDemo()
+        guard usbClosing else { return false }
+        quitReply = onDrained
+        return true
+    }
+
+    func checkForUpdates() {
+        guard updateTask == nil else { return }
+        if issue?.message.hasPrefix("AX1-40") == true { dismissError() }
+        updateStatus = .checking
+        updateTask = Task { [weak self] in
+            guard let self else { return }
+            defer { self.updateTask = nil }
+            do {
+                let result = try await UpdateChecker.check(currentVersion: BuildInfo.version)
+                try Task.checkCancellation()
+                self.updateStatus = .checked(result)
+            } catch is CancellationError {
+                self.updateStatus = nil
+            } catch {
+                self.updateStatus = nil
+                self.report(error.localizedDescription)
+            }
+        }
+    }
+
+    func dismissUpdateStatus() { updateStatus = nil }
+
+    func openReleasePage() {
+        if !NSWorkspace.shared.open(UpdateChecker.releasesURL) {
+            report("AX1-407 · Could not open the GitHub Releases page in your default browser.")
+        }
+    }
+
+    func report(_ message: String) { issue = ConsoleIssue(message: message) }
+    func dismissError() { issue = nil }
+}
+
+enum BuildInfo {
+    static let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.2.0"
+    static let number = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "dev"
+    static var date: String {
+        guard let encoded = Bundle.main.object(forInfoDictionaryKey: "AX1BuildDate") as? String,
+              let date = ISO8601DateFormatter().date(from: encoded) else { return "Development build" }
+        return date.formatted(date: .abbreviated, time: .shortened)
+    }
+}
