@@ -1,6 +1,7 @@
 import AppKit
 import AX1Core
 import SwiftUI
+import UniformTypeIdentifiers
 
 private let bg = Color(red: 0.055, green: 0.070, blue: 0.085)
 private let panel = Color(red: 0.088, green: 0.108, blue: 0.130)
@@ -62,6 +63,7 @@ struct ConsoleView: View {
     @State private var page: ConsolePage = .console
     @State private var edit: BridgeConfig = .defaults
     @State private var patchSaved = false
+    @State private var patchNote: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -327,14 +329,24 @@ struct ConsoleView: View {
                     Text("Build your rig").font(.system(size: 29, weight: .semibold))
                 }
                 Spacer()
-                if patchSaved { Label("Patch saved", systemImage: "checkmark").foregroundStyle(accent).font(.system(size: 12)) }
+                if patchSaved {
+                    Label("Patch saved", systemImage: "checkmark").foregroundStyle(accent).font(.system(size: 12))
+                } else if let patchNote {
+                    Label(patchNote, systemImage: "doc").foregroundStyle(accent).font(.system(size: 12))
+                }
+                Button { importPatch() } label: { Label("Import…", systemImage: "square.and.arrow.down") }
+                    .buttonStyle(ConsoleButton(color: muted)).disabled(model.live)
+                    .help("Load a patch file into the editor. Click Apply patch to use it.")
+                Button { exportPatch() } label: { Label("Export…", systemImage: "square.and.arrow.up") }
+                    .buttonStyle(ConsoleButton(color: muted))
+                    .help("Save the patch shown here as a file you can back up or share.")
                 Button("Use default patch") {
                     edit = .defaults
                     model.learning = nil
                     patchSaved = false
                 }.buttonStyle(ConsoleButton(color: muted)).disabled(model.live)
                 Button("Apply patch") {
-                    if model.savePatch(edit) { patchSaved = true; model.learning = nil }
+                    if model.savePatch(edit) { patchSaved = true; patchNote = nil; model.learning = nil }
                 }.buttonStyle(ConsoleButton(color: accent, filled: true)).disabled(model.live)
             }
             Text(model.live ? "Disarm output before editing the patch." : "Set each tube to the same DMX profile and start address in AsteraApp. The app checks for overlapping addresses and notes.")
@@ -363,10 +375,53 @@ struct ConsoleView: View {
                     if index != edit.fixtures.indices.last { Divider().overlay(edge.opacity(0.6)) }
                 }
             }.rackPanel().disabled(model.live)
-            Text("For 16-pixel RGB, All pixels mirrors one note across the tube. Note per pixel uses 16 consecutive MIDI notes, starting at the note shown.")
+            Text("For 16-pixel RGB, All pixels mirrors one note across the tube. Note per pixel uses 16 consecutive MIDI notes, starting at the note shown. Effect Mode RGB runs Astera’s built-in programs on the tube: its note and the master level set the dimmer, and the program settings are sent continuously.")
                 .foregroundStyle(muted).font(.system(size: 12))
         }
         .padding(26)
+    }
+
+    private func exportPatch() {
+        do {
+            try edit.validated(requireHost: false)
+        } catch {
+            model.report(error.localizedDescription)
+            return
+        }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.json]
+        panel.nameFieldStringValue = "AsteraDMXMidiBridge Patch.\(PatchFile.fileExtension)"
+        panel.message = "Export the fixture patch, MIDI channel and master CC."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try PatchFile.export(edit).write(to: url, options: .atomic)
+            patchNote = "Exported \(url.lastPathComponent)"
+        } catch {
+            model.report(PatchFileError.exportFailed.localizedDescription)
+        }
+    }
+
+    private func importPatch() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.message = "Choose an AsteraDMXMidiBridge patch file."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let data: Data
+            do { data = try Data(contentsOf: url) } catch { throw PatchFileError.unreadable }
+            edit = try PatchFile.load(data, into: edit)
+            model.learning = nil
+            patchSaved = false
+            patchNote = "Imported \(url.lastPathComponent). Click Apply patch to use it."
+        } catch let error as PatchFileError {
+            model.report(error.localizedDescription)
+        } catch let error as PatchError {
+            model.report(error.localizedDescription)
+        } catch {
+            model.report(PatchFileError.unreadable.localizedDescription)
+        }
     }
 
     private func packAddresses() {
@@ -401,7 +456,8 @@ struct ConsoleView: View {
     private func patchRow(_ index: Int) -> some View {
         let field = $edit.fixtures[index]
         let fixture = edit.fixtures[index]
-        return HStack(spacing: 12) {
+        return VStack(alignment: .leading, spacing: 0) {
+        HStack(spacing: 12) {
             Toggle("Enable fixture \(index + 1)", isOn: field.enabled).labelsHidden().frame(width: 28)
             TextField("Fixture name", text: field.name)
                 .accessibilityLabel("Fixture \(index + 1) name")
@@ -454,6 +510,85 @@ struct ConsoleView: View {
                 Spacer(minLength: 0)
             }.frame(width: 106, alignment: .leading)
         }.padding(.horizontal, 14).padding(.vertical, 10)
+            if fixture.profile.isEffect {
+                effectPanel(index)
+            }
+        }
+    }
+
+    private func effectPanel(_ index: Int) -> some View {
+        let effect = $edit.fixtures[index].effect
+        let name = edit.fixtures[index].name
+        let strobe = effect.wrappedValue.strobe
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 18) {
+                effectPicker("Program", options: EffectSettings.programs, value: effect.program, fixture: name)
+                    .frame(width: 250)
+                effectPicker("Direction", options: EffectSettings.directions, value: effect.direction, fixture: name)
+                    .frame(width: 200)
+                effectPicker("Size", options: EffectSettings.sizes, value: effect.size, fixture: name)
+                    .frame(width: 170)
+                Spacer(minLength: 0)
+            }
+            HStack(spacing: 18) {
+                effectPicker("Strobe", options: EffectSettings.strobeModes, value: effect.strobe, fixture: name)
+                    .frame(width: 210)
+                if EffectSettings.variableStrobe.contains(strobe) {
+                    effectSlider("Strobe rate", value: effect.strobe, range: EffectSettings.variableStrobe, fixture: name)
+                }
+                effectSlider("Speed", value: effect.speed, fixture: name)
+                effectSlider("Crossfade", value: effect.crossfade, fixture: name)
+            }
+            HStack(spacing: 18) {
+                effectSlider("Offset", value: effect.offset, fixture: name)
+                effectSlider("Restart", value: effect.restart, fixture: name)
+                HStack(spacing: 8) {
+                    label("COLOURS 2–4", color: muted)
+                    ForEach(0..<3, id: \.self) { slot in
+                        ColorPicker("\(name) effect colour \(slot + 2)", selection: Binding(
+                            get: { color(edit.fixtures[index].effect.colors[slot]) },
+                            set: { newColor in
+                                if let value = NSColor(newColor).usingColorSpace(.sRGB) {
+                                    edit.fixtures[index].effect.colors[slot] = RGB(byte(value.redComponent), byte(value.greenComponent), byte(value.blueComponent))
+                                }
+                            }), supportsOpacity: false).labelsHidden()
+                            .help("Effect colour \(slot + 2). Colour 1 is the fixture colour above.")
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(.leading, 54).padding(.trailing, 14).padding(.bottom, 12)
+    }
+
+    private func effectPicker(_ title: String, options: [EffectOption], value: Binding<UInt8>, fixture: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            label(title.uppercased(), color: muted)
+            Picker("\(fixture) \(title.lowercased())", selection: Binding(
+                get: { EffectOption.matching(value.wrappedValue, in: options)?.value ?? options[0].value },
+                set: { picked in
+                    // Keep a variable strobe rate when Variable is picked again.
+                    if let option = EffectOption.matching(picked, in: options), option.range.contains(value.wrappedValue) { return }
+                    value.wrappedValue = picked
+                })) {
+                ForEach(options) { Text($0.name).tag($0.value) }
+            }.labelsHidden()
+        }
+    }
+
+    private func effectSlider(_ title: String, value: Binding<UInt8>, range: ClosedRange<UInt8> = 0...255, fixture: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                label(title.uppercased(), color: muted)
+                Spacer()
+                label("\(value.wrappedValue)", color: accent)
+            }
+            Slider(value: Binding(
+                get: { Double(value.wrappedValue) },
+                set: { value.wrappedValue = UInt8(clamping: Int($0.rounded())) }),
+                in: Double(range.lowerBound)...Double(range.upperBound), step: 1)
+                .accessibilityLabel("\(fixture) \(title.lowercased())")
+        }.frame(width: 150)
     }
 
     private func applyLearned() {
@@ -607,6 +742,10 @@ private enum BridgeErrors {
         ("AX1-207", "The note range must fit within MIDI notes 0–127. Note per pixel mode needs 16 consecutive notes."),
         ("AX1-208", "DMX slots overlap. Move one of the enabled fixtures until its entire profile has its own slots."),
         ("AX1-209", "MIDI note ranges overlap. Move one of the enabled fixtures until the ranges are separate."),
+        ("AX1-210", "The patch file couldn’t be read. Export it again from AsteraDMXMidiBridge and import the new file."),
+        ("AX1-211", "That file isn’t an AsteraDMXMidiBridge patch. Choose a file made with Export… on the Fixture patch page."),
+        ("AX1-212", "The patch was saved by a newer version of the app. Use AsteraDMXMidiBridge → Check for Updates, then import it again."),
+        ("AX1-213", "The patch couldn’t be saved in that location. Choose another folder, such as Documents, and export again."),
         ("AX1-301", "Core MIDI couldn’t start. Reconnect the controller or restart the app."),
         ("AX1-302", "The app couldn’t open a Core MIDI input port. Restart the app and check Audio MIDI Setup."),
         ("AX1-303", "The MIDI source is no longer available. Choose a connected source."),

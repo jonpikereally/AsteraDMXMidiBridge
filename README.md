@@ -45,9 +45,34 @@ Note velocity sets intensity. Note Off, including a zero-velocity Note On, relea
 | 2 | RGBW · 1 pixel | 4 |
 | 4 | Dimmer + RGB · 1 pixel | 4 |
 | 5 | Dimmer + RGBW · 1 pixel | 5 |
+| 16 | Effect Mode RGB | 21 |
 | 42 | RGB · 16 pixels | 48 |
 
 For profile 42, each tube occupies 48 consecutive channels, with RGB repeated for all sixteen pixels. Choose **All pixels** to trigger the whole tube with one note or choose **Note per pixel** to assign sixteen consecutive notes starting from the row’s base note. For eight tubes all on profile 42, use DMX start addresses **1, 49, 97, 145, 193, 241, 289, 337**. If all eight use **Note per pixel**, base notes **0, 16, 32, 48, 64, 80, 96, 112** cover all 128 MIDI notes without overlap. Set both the app and the tubes to the same profile. Leave room for the full channel count when mixing profiles. [Astera AX1/AX1-BTB DMX profiles](https://www.nashvillegrip.com/uploads/9/8/7/3/98739938/ax1_ax1-btb_ax1_pixeltube_dmx_profiles_v2.pdf)
+
+### Effect Mode RGB (profile 16)
+
+Effect Mode RGB runs Astera’s built-in programs on the tube itself. When you choose it in **Fixture patch**, extra controls appear under that row. The channel map follows Astera’s AX1/AX1-BTB DMX Profiles sheet (V2, page 278):
+
+| Ch | Function | How the app sets it |
+| ---: | --- | --- |
+| 1 | Dimmer | The fixture’s MIDI note velocity × master level. Closed when the note is released. |
+| 2 | Strobe | **Strobe**: Off, Random fast/medium/slow, or Variable (0.4–25 Hz, values 7–255). |
+| 3 | Program | **Program**: one of the 20 programs on the sheet, from One Color Static to Rotor Split 4. |
+| 4 | Speed | **Speed** slider, slow → fast. |
+| 5 | Crossfade | **Crossfade** slider, no fade → smooth fade. |
+| 6 | Direction | **Direction**: forward or reverse, looping or once. |
+| 7 | Size | **Size**: 1–4 groups. |
+| 8 | Offset | **Offset** slider. Shifts the tube within the program when Size is more than 1 group. |
+| 9 | Restart program | **Restart** slider. Changing the value restarts the program. |
+| 10–12 | Colour 1 RGB | The row’s main colour. |
+| 13–21 | Colours 2–4 RGB | The three colour wells under the row. |
+
+Channels 2–21 are sent continuously while output is armed, so the program keeps running between notes; only the dimmer follows MIDI. Set the tube to profile 16 at the same start address in AsteraApp.
+
+## Save and share patches
+
+On **Fixture patch**, click **Export…** to save the patch shown, including every fixture’s profile, address, note, colours and effect settings, plus the MIDI channel and master CC, as a `.json` file. Click **Import…** to load one into the editor, check it, and click **Apply patch** to use it. Imports leave your output method, Art-Net address and universe unchanged. If an import or export fails, the error code is listed in the [error list](docs/error-list.md).
 
 ## QLC+ fallback with the same ENTTEC
 

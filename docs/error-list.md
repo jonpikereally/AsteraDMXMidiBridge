@@ -27,6 +27,10 @@ Find the code shown in the app below. The same reference is under **Error list**
 | `AX1-207` | Note range is outside MIDI’s 128 notes | Keep every note in 0–127. **Note per pixel** needs sixteen consecutive notes. |
 | `AX1-208` | Fixtures share DMX slots | Move one fixture to a free range, or choose **Auto-patch → Pack DMX addresses from 1**. |
 | `AX1-209` | Fixtures share MIDI notes | Move one fixture to a free note range, or choose **Auto-patch → Pack MIDI notes from 0**. |
+| `AX1-210` | Patch file couldn’t be read | The file is damaged or not valid JSON. Export the patch again from AsteraDMXMidiBridge and import the new file. |
+| `AX1-211` | Not an AsteraDMXMidiBridge patch | Choose a file made with **Export…** on the **Fixture patch** page. |
+| `AX1-212` | Patch from a newer app version | Choose **AsteraDMXMidiBridge → Check for Updates**, install the update, then import again. |
+| `AX1-213` | Patch couldn’t be exported | Choose a folder you can write to, such as Documents, and export again. |
 
 ## Art-Net output
 

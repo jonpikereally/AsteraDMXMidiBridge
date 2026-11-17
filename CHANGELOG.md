@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.0 (build 4) · 2026-11-17
+
+- Added Astera profile **16 · Effect Mode RGB** (21 channels). Pick a built-in program, strobe, speed, crossfade, direction, size, offset, restart and four colours per tube. The MIDI note and master level drive the dimmer.
+- Added **Import…** and **Export…** on the Fixture patch page to save and reload patches as JSON files. Error codes AX1-210 to AX1-213 cover failed imports and exports.
+- Moved **Check for Updates…** to the app menu (**AsteraDMXMidiBridge → Check for Updates…**).
+
 ## 1.2.0 (build 3) · 2026-11-17
 
 - Renamed AX1 Bridge to AsteraDMXMidiBridge. Existing MIDI and fixture preferences remain available.

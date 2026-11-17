@@ -66,6 +66,18 @@ public struct LightingEngine: Sendable {
             guard (1...profile.maximumStartAddress).contains(fixture.address),
                   Int(fixture.note) <= fixture.maximumBaseNote else { continue }
 
+            if profile.isEffect {
+                // Effect settings are sent continuously so the program keeps running;
+                // the note only opens the dimmer on channel 1.
+                let start = fixture.address - 1
+                let velocity = active[fixture.note] ?? 0
+                slots[start] = velocity > 0 ? RGB.scaledComponent(255, velocity: velocity, master: master) : 0
+                for (offset, value) in fixture.effect.slots(color1: fixture.color).enumerated() {
+                    slots[start + 1 + offset] = value
+                }
+                continue
+            }
+
             for pixel in 0..<profile.pixelCount {
                 let note = fixture.independentPixels ? fixture.note + UInt8(pixel) : fixture.note
                 guard let velocity = active[note] else { continue }

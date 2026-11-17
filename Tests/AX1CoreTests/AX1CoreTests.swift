@@ -129,4 +129,99 @@ final class AX1CoreTests: XCTestCase {
         let decoded = try JSONDecoder().decode(FixturePatch.self, from: JSONSerialization.data(withJSONObject: legacy))
         XCTAssertEqual(fixture, decoded)
     }
+
+    func testEffectModeRGBFollowsAsteraProfile16ChannelMap() throws {
+        var config = BridgeConfig.defaults
+        config.fixtures = [FixturePatch(
+            name: "FX", address: 10, note: 60, color: RGB(1, 2, 3), profile: .effectRGB,
+            effect: EffectSettings(
+                strobe: 5, program: 118, speed: 200, crossfade: 40, direction: 191, size: 64, offset: 17, restart: 9,
+                colors: [RGB(4, 5, 6), RGB(7, 8, 9), RGB(10, 11, 12)]
+            )
+        )]
+        XCTAssertEqual(AX1Profile.effectRGB.slotCount, 21)
+        XCTAssertEqual(AX1Profile.effectRGB.maximumStartAddress, 492)
+        XCTAssertNoThrow(try config.validated(requireHost: false))
+
+        var engine = LightingEngine()
+        let settings: [UInt8] = [5, 118, 200, 40, 191, 64, 17, 9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        // Released: dimmer closed, but the program settings keep flowing.
+        var frame = engine.frame(config: config)
+        XCTAssertEqual(frame[9], 0)
+        XCTAssertEqual(Array(frame[10..<30]), settings)
+        XCTAssertEqual(frame[30], 0)
+        XCTAssertEqual(frame[8], 0)
+
+        engine.noteOn(60, velocity: 127, channel: 1)
+        frame = engine.frame(config: config)
+        XCTAssertEqual(frame[9], 255)
+        XCTAssertEqual(Array(frame[10..<30]), settings)
+
+        engine.setMaster(0)
+        XCTAssertEqual(engine.frame(config: config), [UInt8](repeating: 0, count: 512))
+    }
+
+    func testEffectOptionsMatchDocumentedRanges() {
+        XCTAssertEqual(EffectSettings.programs.count, 20)
+        XCTAssertEqual(EffectOption.matching(101, in: EffectSettings.programs)?.name, "Double Flag Running")
+        XCTAssertEqual(EffectOption.matching(157, in: EffectSettings.programs)?.name, "Rotor Split 4")
+        XCTAssertNil(EffectOption.matching(158, in: EffectSettings.programs))
+        XCTAssertEqual(EffectOption.matching(3, in: EffectSettings.strobeModes)?.name, "Off")
+        XCTAssertEqual(EffectOption.matching(90, in: EffectSettings.strobeModes)?.name, "Variable")
+        XCTAssertEqual(EffectOption.matching(190, in: EffectSettings.directions)?.name, "Reverse once")
+        XCTAssertEqual(EffectOption.matching(191, in: EffectSettings.sizes)?.name, "4 groups")
+    }
+
+    func testSavedPatchesWithoutEffectSettingsStillLoad() throws {
+        let legacy = """
+        {"id":"6B1F5A3E-2C1D-4F7A-9E55-1B0C7D9A2F11","name":"AX1 1","address":1,"note":36,
+         "color":{"r":255,"g":0,"b":0},"enabled":true,"profile":1,"white":0,"independentPixels":false}
+        """
+        let fixture = try JSONDecoder().decode(FixturePatch.self, from: Data(legacy.utf8))
+        XCTAssertEqual(fixture.effect, EffectSettings())
+        XCTAssertEqual(fixture.effect.colors.count, 3)
+    }
+
+    func testPatchFileRoundTripsAndKeepsDestination() throws {
+        var source = BridgeConfig.defaults
+        source.midiChannel = 4
+        source.masterCC = 11
+        source.fixtures[0].profile = .effectRGB
+        source.fixtures[0].effect.program = 126
+        source.fixtures = Array(source.fixtures.prefix(1))
+        source.host = "10.0.0.9"
+
+        let data = try PatchFile.export(source)
+        XCTAssertFalse(String(decoding: data, as: UTF8.self).contains("10.0.0.9"))
+
+        var target = BridgeConfig.defaults
+        target.host = "127.0.0.1"
+        target.universe = 3
+        let imported = try PatchFile.load(data, into: target)
+        XCTAssertEqual(imported.fixtures, source.fixtures)
+        XCTAssertEqual(imported.midiChannel, 4)
+        XCTAssertEqual(imported.masterCC, 11)
+        XCTAssertEqual(imported.host, "127.0.0.1")
+        XCTAssertEqual(imported.universe, 3)
+    }
+
+    func testPatchFileImportRejectsBadFilesWithCodes() throws {
+        let base = BridgeConfig.defaults
+        XCTAssertThrowsError(try PatchFile.load(Data("not json".utf8), into: base)) {
+            XCTAssertEqual(($0 as? PatchFileError)?.code, "AX1-210")
+        }
+        XCTAssertThrowsError(try PatchFile.load(Data(#"{"format":"other","version":1}"#.utf8), into: base)) {
+            XCTAssertEqual(($0 as? PatchFileError)?.code, "AX1-211")
+        }
+        XCTAssertThrowsError(try PatchFile.load(Data(#"{"format":"AsteraDMXMidiBridge.patch","version":99}"#.utf8), into: base)) {
+            XCTAssertEqual(($0 as? PatchFileError)?.code, "AX1-212")
+        }
+
+        var overlapping = base
+        overlapping.fixtures[1].address = 2
+        let data = try PatchFile.export(overlapping)
+        XCTAssertThrowsError(try PatchFile.load(data, into: base)) {
+            XCTAssertEqual(($0 as? PatchError)?.code, "AX1-208")
+        }
+    }
 }

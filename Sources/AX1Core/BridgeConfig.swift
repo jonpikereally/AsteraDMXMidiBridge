@@ -36,6 +36,8 @@ public struct FixturePatch: Codable, Equatable, Identifiable, Sendable {
     public var profile: AX1Profile
     public var white: UInt8
     public var independentPixels: Bool
+    /// Used only by Effect Mode profiles.
+    public var effect: EffectSettings
 
     public var noteCount: Int { independentPixels ? profile.pixelCount : 1 }
     public var maximumBaseNote: Int { 128 - noteCount }
@@ -43,7 +45,8 @@ public struct FixturePatch: Codable, Equatable, Identifiable, Sendable {
 
     public init(
         id: UUID = UUID(), name: String, address: Int, note: UInt8, color: RGB, enabled: Bool = true,
-        profile: AX1Profile = .rgb, white: UInt8 = 0, independentPixels: Bool = false
+        profile: AX1Profile = .rgb, white: UInt8 = 0, independentPixels: Bool = false,
+        effect: EffectSettings = EffectSettings()
     ) {
         self.id = id
         self.name = name
@@ -54,10 +57,11 @@ public struct FixturePatch: Codable, Equatable, Identifiable, Sendable {
         self.profile = profile
         self.white = white
         self.independentPixels = independentPixels
+        self.effect = effect
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, address, note, color, enabled, profile, white, independentPixels
+        case id, name, address, note, color, enabled, profile, white, independentPixels, effect
     }
 
     public init(from decoder: Decoder) throws {
@@ -71,7 +75,8 @@ public struct FixturePatch: Codable, Equatable, Identifiable, Sendable {
             enabled: try values.decode(Bool.self, forKey: .enabled),
             profile: try values.decodeIfPresent(AX1Profile.self, forKey: .profile) ?? .rgb,
             white: try values.decodeIfPresent(UInt8.self, forKey: .white) ?? 0,
-            independentPixels: try values.decodeIfPresent(Bool.self, forKey: .independentPixels) ?? false
+            independentPixels: try values.decodeIfPresent(Bool.self, forKey: .independentPixels) ?? false,
+            effect: try values.decodeIfPresent(EffectSettings.self, forKey: .effect) ?? EffectSettings()
         )
     }
 }
