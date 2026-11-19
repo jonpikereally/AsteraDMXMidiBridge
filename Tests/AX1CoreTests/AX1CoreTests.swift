@@ -273,6 +273,95 @@ final class AX1CoreTests: XCTestCase {
         XCTAssertEqual(engine.activeLook, config.looks[0].id)    // all-notes-off keeps the look
     }
 
+    func testFlashLooksShowOnlyWhileHeldThenTheLookUnderneathReturns() throws {
+        var config = effectRig()
+        let red = Look(name: "Red Flash", note: 96, color: RGB(255, 0, 0), flash: true)
+        let blue = Look(name: "Blue Calm", note: 61, color: RGB(0, 0, 255))
+        config.looks += [red, blue]
+        XCTAssertNoThrow(try config.validated(requireHost: false))
+        var engine = LightingEngine()
+        func colour() -> [UInt8] { Array(engine.frame(config: config)[9...11]) }
+        func front() -> [UInt8] { Array(engine.frame(config: config)[30...32]) }
+
+        engine.selectLook(config.looks[0].id)                       // Gold Big underneath
+        XCTAssertEqual(colour(), [255, 153, 13])
+        engine.holdFlash(red.id)
+        XCTAssertEqual(engine.activeLook, red.id)
+        XCTAssertEqual(engine.baseLook, config.looks[0].id)
+        XCTAssertEqual(colour(), [255, 0, 0])
+        XCTAssertEqual(engine.frame(config: config)[2], 0)          // the flash's own program, not Gold Big's
+        XCTAssertEqual(front(), [255, 153, 42])                     // the front fixture doesn't follow looks
+        engine.releaseFlash(red.id)
+        XCTAssertEqual(colour(), [255, 153, 13])
+        XCTAssertEqual(engine.frame(config: config)[2], 40)
+
+        // a look note during a flash becomes the look underneath
+        engine.holdFlash(red.id)
+        engine.selectLook(blue.id)
+        XCTAssertEqual(colour(), [255, 0, 0])
+        engine.releaseFlash(red.id)
+        XCTAssertEqual(colour(), [0, 0, 255])
+
+        // clearing notes and all-notes-off end flashes but keep the look underneath
+        engine.holdFlash(red.id)
+        engine.clearNotes()
+        XCTAssertEqual(engine.activeLook, blue.id)
+        engine.holdFlash(red.id)
+        engine.controlChange(123, value: 0, config: config, channel: 1)
+        XCTAssertEqual(engine.activeLook, blue.id)
+        XCTAssertEqual(engine.heldFlashes, [])
+
+        // the flag survives a patch round trip, and looks saved without it aren't flashes
+        let file = try PatchFile.export(config)
+        let loaded = try PatchFile.load(file, into: .defaults)
+        XCTAssertEqual(loaded.looks.first { $0.note == 96 }?.flash, true)
+        XCTAssertEqual(loaded.looks.first { $0.note == 61 }?.flash, false)
+        let old = #"{"id":"6A1F0E2C-1B3D-4C51-9A01-0000000000B1","name":"Old","note":70,"color":{"r":1,"g":2,"b":3},"effect":{}}"#
+        XCTAssertEqual(try JSONDecoder().decode(Look.self, from: Data(old.utf8)).flash, false)
+    }
+
+    func testGroupWarmthFixesColourToSteadyWhiteAndIgnoresLooks() throws {
+        XCTAssertEqual(RGB(kelvin: 2700), RGB(255, 167, 87))
+        XCTAssertEqual(RGB(kelvin: 4300), RGB(255, 213, 179))
+        XCTAssertEqual(RGB(kelvin: 6500), RGB(255, 254, 250))
+
+        var config = effectRig()
+        config.fixtures[1].effect = EffectSettings(strobe: 104, program: 40, speed: 200)
+        config.fixtures[1].followsLooks = true                      // the group overrides this
+        config.groups = [FixtureGroup(name: "Front wash", fixtureIDs: [config.fixtures[1].id], warmth: 3200)]
+        XCTAssertNoThrow(try config.validated(requireHost: false))
+        var engine = LightingEngine()
+        engine.selectLook(config.looks[0].id)                       // Gold Big
+        engine.controlChange(21, value: 127, config: config)
+        var frame = engine.frame(config: config)
+        XCTAssertEqual(frame[21], 255)                              // brightness still follows CC 21
+        XCTAssertEqual(Array(frame[22...24]), [0, 0, 128])          // strobe off, One Color Static, default speed
+        XCTAssertEqual(Array(frame[30...32]), [255, 184, 123])      // colour 1 at 3200 K
+        XCTAssertEqual(Array(frame[33...41]), [255, 184, 123, 255, 184, 123, 255, 184, 123])
+        XCTAssertEqual(Array(frame[9...11]), [255, 153, 13])        // the fixture outside the group still follows looks
+        let red = Look(name: "Red Flash", note: 96, color: RGB(255, 0, 0), flash: true)
+        config.looks.append(red)
+        engine.holdFlash(red.id)
+        frame = engine.frame(config: config)
+        XCTAssertEqual(Array(frame[30...32]), [255, 184, 123])      // flashes don't reach it either
+        XCTAssertEqual(Array(frame[9...11]), [255, 0, 0])
+
+        // the first group that fixes warmth wins; groups without warmth don't count
+        config.groups.insert(FixtureGroup(name: "All", fixtureIDs: config.fixtures.map(\.id)), at: 0)
+        config.groups.append(FixtureGroup(name: "Cool", fixtureIDs: [config.fixtures[1].id], warmth: 6500))
+        XCTAssertEqual(config.warmth(of: config.fixtures[1]), 3200)
+        XCTAssertNil(config.warmth(of: config.fixtures[0]))
+
+        // saved and loaded with the patch; out-of-range values are kept in range; old groups have none
+        let loaded = try PatchFile.load(try PatchFile.export(config), into: .defaults)
+        XCTAssertEqual(loaded.groups.map(\.warmth), [nil, 3200, 6500])
+        XCTAssertEqual(FixtureGroup(name: "Hot", warmth: 1500).warmth, 2700)
+        let old = #"{"id":"6A1F0E2C-1B3D-4C51-9A01-0000000000C1","name":"Old","fixtureIDs":[],"maxLevel":80}"#
+        XCTAssertNil(try JSONDecoder().decode(FixtureGroup.self, from: Data(old.utf8)).warmth)
+        let far = #"{"id":"6A1F0E2C-1B3D-4C51-9A01-0000000000C2","name":"Far","warmth":9000}"#
+        XCTAssertEqual(try JSONDecoder().decode(FixtureGroup.self, from: Data(far.utf8)).warmth, 6500)
+    }
+
     func testLookAndLevelCCValidationAndPatchRoundTrip() throws {
         var config = effectRig()
         config.looks[0].note = 37
@@ -339,5 +428,33 @@ final class AX1CoreTests: XCTestCase {
         let old = try PatchFile.load(Data(v2.utf8), into: .defaults)
         XCTAssertEqual(old.groups, [])
         XCTAssertEqual(old.fixtures[0].maxLevel, 100)        // out-of-range values are capped
+    }
+
+    func testLookMotionChasesAcrossFollowers() {
+        let stage = (0..<4).map { FixturePatch(name: "S\($0 + 1)", address: 1 + $0 * 21, note: UInt8(36 + $0), color: RGB(255, 255, 255),
+                                               profile: .effectRGB, levelCC: 20) }
+        let front = FixturePatch(name: "F", address: 85, note: 40, color: RGB(255, 255, 255), profile: .effectRGB, levelCC: 21)
+        var config = BridgeConfig(host: "", universe: 0, midiChannel: 0, masterCC: 7, fixtures: stage + [front])
+        config.groups = [FixtureGroup(name: "Front", fixtureIDs: [front.id], warmth: 4300)]
+        let chase = Look(name: "Chase", note: 108, color: RGB(255, 0, 0), motion: LookMotion(style: .chase, stepsPerBeat: 4))
+        config.looks = [chase]
+        var engine = LightingEngine()
+        engine.controlChange(20, value: 127, config: config)
+        engine.controlChange(21, value: 127, config: config)
+        engine.selectLook(chase.id)
+        for (beats, lit) in [(0.0, 0), (0.25, 1), (0.5, 2), (0.75, 3), (1.0, 0)] {
+            engine.setBeats(beats)
+            let frame = engine.frame(config: config)
+            XCTAssertEqual(stage.map { frame[$0.address - 1] }, (0..<4).map { $0 == lit ? 255 : 0 })
+            XCTAssertEqual(frame[front.address - 1], 255)
+        }
+    }
+
+    func testLookMotionPatterns() {
+        XCTAssertEqual(LookMotion(order: .bounce).steps(count: 4), [[0], [1], [2], [3], [2], [1]])
+        XCTAssertEqual(LookMotion(order: .outsideIn).steps(count: 4), [[0, 3], [1, 2]])
+        let highlight = LookMotion(style: .highlight, stepsPerBeat: 1, dim: 25)
+        XCTAssertEqual(highlight.factor(index: 2, count: 4, beats: 0.5), 0.25)
+        XCTAssertEqual(LookMotion(stepsPerBeat: 1, tail: 1).factor(index: 0, count: 4, beats: 1.5), 0.5, accuracy: 1e-9)
     }
 }

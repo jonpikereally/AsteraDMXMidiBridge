@@ -166,9 +166,9 @@ struct ConsoleView: View {
                     Button {
                         model.toggleDemo()
                     } label: {
-                        Label(model.demo ? "Stop preview" : "Run preview", systemImage: model.demo ? "stop.fill" : "play.fill")
+                        Label(model.demo && !model.live ? "Stop preview" : "Run preview", systemImage: model.demo && !model.live ? "stop.fill" : "play.fill")
                     }
-                    .buttonStyle(ConsoleButton(color: model.demo ? accent : ink))
+                    .buttonStyle(ConsoleButton(color: model.demo && !model.live ? accent : ink))
                     .disabled(model.live || model.engine.blackout)
                     .help("Demo runs locally with output disarmed.")
                     Button { model.clearNotes() } label: { Label("Clear notes", systemImage: "xmark") }
@@ -181,8 +181,8 @@ struct ConsoleView: View {
                     }
                 }
                 HStack(spacing: 8) {
-                    Image(systemName: "hand.tap").foregroundStyle(accent)
-                    Text("Click a fixture to latch it. MIDI notes follow velocity and release.")
+                    Image(systemName: "lightbulb").foregroundStyle(accent)
+                    Text("Armed fixtures show READY: they get DMX with the dimmer at 0 until MIDI sets a level. Test fixture lights one at full until you click Stop test.")
                         .foregroundStyle(muted)
                 }.font(.system(size: 12))
                 .padding(.top, 3)
@@ -194,67 +194,117 @@ struct ConsoleView: View {
         .padding(26)
     }
 
-    private func fixtureCard(_ fixture: FixturePatch, index: Int) -> some View {
-        let velocity = (0..<fixture.noteCount).map { model.engine.level(of: fixture, pixel: $0) }.max() ?? 0
+    /// What a fixture is showing now: brightness 0–1 (level × master × maximums) and its current colour.
+    private func output(of fixture: FixturePatch) -> (level: Double, tint: Color) {
+        let velocity = UInt8(clamping: Int((Double((0..<fixture.noteCount).map { model.engine.level(of: fixture, pixel: $0) }.max() ?? 0)
+            * model.engine.motionFactor(of: fixture, config: model.config)).rounded()))
         let level = fixture.enabled && !model.engine.blackout
             ? (Double(velocity) / 127) * (Double(model.engine.master) / 127) * model.config.limit(of: fixture) : 0
         var shown = fixture
         shown.color = model.engine.appearance(of: fixture, config: model.config).color
-        let tint = fixtureColor(shown)
-        let tintStrength = min(1, max(0.28, level + 0.18))
-        return Button {
-            model.tap(fixture)
-        } label: {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    label(String(format: "%02d", index + 1), color: muted)
-                    Spacer()
-                    Circle().fill(level > 0 ? tint : edge).frame(width: 7, height: 7)
+        return (level, fixtureColor(shown))
+    }
+
+    /// One small square per fixture in the patch, showing what goes out over DMX while output is armed.
+    private var outputIndicators: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 22, maximum: 26), spacing: 5)], alignment: .leading, spacing: 6) {
+            ForEach(Array(model.config.fixtures.enumerated()), id: \.element.id) { index, fixture in
+                let shown = output(of: fixture)
+                let level = model.live ? shown.level : 0
+                VStack(spacing: 3) {
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(level > 0 ? shown.tint.opacity(0.3 + 0.7 * level) : recess)
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 3)
+                                .strokeBorder(level > 0 ? shown.tint : model.live && fixture.enabled ? accent.opacity(0.45) : edge)
+                        }
+                        .shadow(color: level > 0 ? shown.tint.opacity(0.35 + 0.4 * level) : .clear, radius: 4)
+                        .frame(width: 16, height: 16)
+                    Text(String(format: "%02d", index + 1))
+                        .font(.system(size: 8, weight: .medium, design: .monospaced))
+                        .foregroundStyle(level > 0 ? ink : muted)
                 }
-                HStack(spacing: 4) {
-                    ForEach(0..<16) { index in
-                        let pixelNote = UInt8(clamping: Int(fixture.note) + index)
-                        let independentActive = (model.engine.levels[pixelNote] ?? 0) != 0 || model.engine.level(of: fixture, pixel: index) != 0
-                        let on = level > 0 && (!fixture.independentPixels || fixture.profile != .rgb16 || independentActive)
-                        RoundedRectangle(cornerRadius: 1.5).fill(tint.opacity(on ? tintStrength : 0.11))
-                                .shadow(color: on ? tint.opacity(level * 0.5) : .clear, radius: 5)
-                    }
-                }.frame(height: 15)
-                 .background { Capsule().fill(tint.opacity(level * 0.18)).blur(radius: 13) }
-                Text(fixture.name.isEmpty ? "Tube \(index + 1)" : fixture.name)
-                    .font(.system(size: 15, weight: .semibold)).lineLimit(1)
-                VStack(alignment: .leading, spacing: 4) {
-                    label("DMX \(String(format: "%03d", fixture.address))   /   N \(fixture.note)" + (fixture.levelCC.map { "   /   CC \($0)" } ?? ""), color: muted)
-                    Text(fixture.enabled ? fixture.profile.displayName : "Disabled")
-                        .font(.system(size: 10, weight: .medium)).lineLimit(1)
-                        .foregroundStyle(fixture.enabled ? tint.opacity(0.8) : muted)
-                }
+                .opacity(fixture.enabled ? 1 : 0.35)
+                .animation(.easeOut(duration: 0.12), value: level)
+                .help("\(fixture.name.isEmpty ? "Fixture \(index + 1)" : fixture.name): " + (fixture.enabled ? (level > 0 ? "\(Int((level * 100).rounded()))%" : model.live ? "ready, dimmer at 0" : "output disarmed") : "disabled"))
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(fixture.name.isEmpty ? "Fixture \(index + 1)" : fixture.name)
+                .accessibilityValue(fixture.enabled ? (level > 0 ? "Lit \(Int((level * 100).rounded())) percent" : model.live ? "Ready, dimmer at 0" : "Output disarmed") : "Disabled")
             }
-            .padding(12).frame(maxWidth: .infinity, alignment: .leading)
-            .background(panel.opacity(fixture.enabled ? 1 : 0.5), in: RoundedRectangle(cornerRadius: 12))
-            .overlay { RoundedRectangle(cornerRadius: 12).strokeBorder(level > 0 ? tint.opacity(0.42) : edge) }
         }
-        .buttonStyle(.plain)
-        .disabled(!fixture.enabled || model.engine.blackout || model.usbStarting)
-        .accessibilityLabel(fixture.name)
-        .accessibilityValue(level > 0 ? "Lit" : "Off")
-        .help("Latch \(fixture.name) at full velocity, or click again to release.")
+        .padding(.vertical, 2)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("DMX output per fixture")
+    }
+
+    private func fixtureCard(_ fixture: FixturePatch, index: Int) -> some View {
+        let (level, tint) = output(of: fixture)
+        let tintStrength = min(1, max(0.28, level + 0.18))
+        let name = fixture.name.isEmpty ? "Tube \(index + 1)" : fixture.name
+        let testing = model.pads.contains(fixture.id)
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                label(String(format: "%02d", index + 1), color: muted)
+                Spacer()
+                if model.live && fixture.enabled && level == 0 {
+                    label("READY", color: accent)
+                }
+                Circle().fill(level > 0 ? tint : model.live && fixture.enabled ? accent.opacity(0.55) : edge).frame(width: 7, height: 7)
+            }
+            HStack(spacing: 4) {
+                ForEach(0..<16) { index in
+                    let pixelNote = UInt8(clamping: Int(fixture.note) + index)
+                    let independentActive = (model.engine.levels[pixelNote] ?? 0) != 0 || model.engine.level(of: fixture, pixel: index) != 0
+                    let on = level > 0 && (!fixture.independentPixels || fixture.profile != .rgb16 || independentActive)
+                    RoundedRectangle(cornerRadius: 1.5).fill(tint.opacity(on ? tintStrength : 0.11))
+                            .shadow(color: on ? tint.opacity(level * 0.5) : .clear, radius: 5)
+                }
+            }.frame(height: 15)
+             .background { Capsule().fill(tint.opacity(level * 0.18)).blur(radius: 13) }
+            Text(name)
+                .font(.system(size: 15, weight: .semibold)).lineLimit(1)
+            VStack(alignment: .leading, spacing: 4) {
+                label("DMX \(String(format: "%03d", fixture.address))   /   N \(fixture.note)" + (fixture.levelCC.map { "   /   CC \($0)" } ?? ""), color: muted)
+                Text(fixture.enabled ? fixture.profile.displayName : "Disabled")
+                    .font(.system(size: 10, weight: .medium)).lineLimit(1)
+                    .foregroundStyle(fixture.enabled ? tint.opacity(0.8) : muted)
+            }
+            Button { model.tap(fixture) } label: {
+                Label(testing ? "Stop test" : "Test fixture", systemImage: testing ? "stop.fill" : "lightbulb")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(ConsoleButton(color: testing ? accent : ink, filled: testing, compact: true))
+            .disabled(!fixture.enabled || model.engine.blackout || model.usbStarting)
+            .help(testing ? "Release \(name) back to MIDI." : "Light \(name) at full brightness until you click Stop test. Ableton can’t dim it while it’s on.")
+            .accessibilityLabel(testing ? "Stop testing \(name)" : "Test \(name)")
+        }
+        .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+        .background(panel.opacity(fixture.enabled ? 1 : 0.5), in: RoundedRectangle(cornerRadius: 12))
+        .overlay { RoundedRectangle(cornerRadius: 12).strokeBorder(level > 0 ? tint.opacity(0.42) : edge) }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(name)
+        .accessibilityValue(testing ? "Testing at full" : level > 0 ? "Lit" : model.live && fixture.enabled ? "Ready, dimmer at 0" : "Off")
     }
 
     private var maxPanel: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
                 sectionTitle("Maximum brightness", icon: "sun.max")
-                Text("Caps each light. A light in a group is scaled by both, e.g. 80% × 50% = 40%. Works while output is armed.")
+                Text("Caps each light. A light in a group is scaled by both, e.g. 80% × 50% = 40%. Groups with fixed warmth also get a warmth slider. Works while output is armed.")
                     .font(.system(size: 11)).foregroundStyle(muted)
             }
             if !model.config.groups.isEmpty {
                 label("GROUPS", color: muted)
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 160), spacing: 14), count: 3), spacing: 8) {
                     ForEach(model.config.groups) { group in
-                        maxSlider(group.name.isEmpty ? "Group" : group.name, value: Int(group.maxLevel),
-                                  detail: "\(group.fixtureIDs.filter { id in model.config.fixtures.contains { $0.id == id } }.count) lights") {
-                            model.setGroupMax(group.id, $0)
+                        VStack(alignment: .leading, spacing: 8) {
+                            maxSlider(group.name.isEmpty ? "Group" : group.name, value: Int(group.maxLevel),
+                                      detail: "\(group.fixtureIDs.filter { id in model.config.fixtures.contains { $0.id == id } }.count) lights") {
+                                model.setGroupMax(group.id, $0)
+                            }
+                            if let kelvin = group.warmth {
+                                warmthSlider(group, kelvin: kelvin)
+                            }
                         }
                     }
                 }
@@ -276,6 +326,28 @@ struct ConsoleView: View {
         }
         .padding(13).rackPanel()
         .padding(.top, 6)
+    }
+
+    /// Steady-white warmth for a group that fixes warmth, from warm (2700 K) to cool (6500 K).
+    private func warmthSlider(_ group: FixtureGroup, kelvin: Int) -> some View {
+        let name = group.name.isEmpty ? "Group" : group.name
+        let range = FixtureGroup.warmthRange
+        return VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                label("WARMTH", color: muted)
+                RoundedRectangle(cornerRadius: 2).fill(color(RGB(kelvin: kelvin)))
+                    .frame(width: 16, height: 9)
+                    .overlay { RoundedRectangle(cornerRadius: 2).strokeBorder(edge) }
+                Spacer()
+                label("\(kelvin) K", color: accent)
+            }
+            Slider(value: Binding(get: { Double(kelvin) }, set: { model.setGroupWarmth(group.id, Int(($0 / 100).rounded()) * 100) }),
+                   in: Double(range.lowerBound)...Double(range.upperBound), step: 100)
+                .accessibilityLabel("\(name) warmth")
+                .accessibilityValue("\(kelvin) kelvin")
+            HStack { label("WARM", color: muted); Spacer(); label("COOL", color: muted) }
+        }
+        .help("Steady white for \(name)'s lights. The tubes mix it from red, green and blue, so set it by eye.")
     }
 
     private func maxSlider(_ title: String, value: Int, detail: String?, set: @escaping (Int) -> Void) -> some View {
@@ -355,17 +427,28 @@ struct ConsoleView: View {
                 }
                 .buttonStyle(ConsoleButton(color: accent, filled: !model.live))
                 .disabled(model.usbClosing)
-                Text(model.usbStarting ? "Opening the USB DMX port…" : model.usbClosing ? "Sending final blackout frames…" : model.live ? "Sending DMX frames. Fixture status isn’t reported by the transmitter." : "Preview stays on this Mac until you arm output.")
+                Button { model.toggleDemo() } label: {
+                    Label(model.demo && model.live ? "Stop live preview" : "Run live preview",
+                          systemImage: model.demo && model.live ? "stop.fill" : "play.fill")
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(ConsoleButton(color: model.demo && model.live ? accent : ink))
+                .disabled(!model.live || model.usbStarting || model.engine.blackout)
+                .help("Lights each enabled fixture in turn over DMX, to check every tube responds. MIDI is ignored until you stop it.")
+                outputIndicators
+                Text(model.usbStarting ? "Opening the USB DMX port…" : model.usbClosing ? "Sending final blackout frames…" : model.live ? (model.demo ? "Live preview: each fixture lights in turn. MIDI is ignored until you stop it." : "Sending DMX frames. Every enabled fixture is ready at 0 until MIDI sets a level. Fixture status isn’t reported by the transmitter.") : "Preview stays on this Mac until you arm output.")
                     .foregroundStyle(muted).font(.system(size: 11)).fixedSize(horizontal: false, vertical: true)
             }.padding(13).rackPanel()
 
             VStack(alignment: .leading, spacing: 8) {
                 sectionTitle("Look", icon: "paintpalette")
-                Picker("Active look", selection: Binding(get: { model.engine.activeLook }, set: model.selectLook)) {
+                Picker("Active look", selection: Binding(get: { model.engine.baseLook }, set: model.selectLook)) {
                     Text("Patch settings").tag(UUID?.none)
-                    ForEach(model.config.looks) { Text("\($0.name)  ·  N \($0.note)").tag(Optional($0.id)) }
+                    ForEach(model.config.looks.filter { !$0.flash }) { Text("\($0.name)  ·  N \($0.note)").tag(Optional($0.id)) }
                 }.labelsHidden().pickerStyle(.menu)
-                label(model.config.looks.isEmpty ? "Add looks on the Fixture patch page" : "Look notes switch fixtures that follow looks", color: muted)
+                label(model.config.looks.isEmpty ? "Add looks on the Fixture patch page"
+                      : model.engine.activeLook != model.engine.baseLook ? "Flash showing: \(model.config.looks.first { $0.id == model.engine.activeLook }?.name ?? "")"
+                      : "Look notes switch fixtures that follow looks", color: muted)
             }.padding(13).rackPanel()
 
             VStack(alignment: .leading, spacing: 8) {
@@ -583,8 +666,13 @@ struct ConsoleView: View {
                     }.labelsHidden().frame(width: 92)
                     .help("A MIDI CC that sets this fixture's level. The dimmer uses the held note or this CC, whichever is higher.")
                 }
+                let warmthGroup = edit.groups.first { $0.warmth != nil && $0.fixtureIDs.contains(fixture.id) }
                 Toggle("Follows looks", isOn: field.followsLooks)
-                    .help("When on, a look note replaces this fixture's colour and effect settings.")
+                    .disabled(warmthGroup != nil)
+                    .help(warmthGroup.map { "Its group \($0.name) fixes a warmth, so it ignores looks." } ?? "When on, a look note replaces this fixture's colour and effect settings.")
+                if let warmthGroup {
+                    label("WARMTH FROM \(warmthGroup.name.uppercased())", color: muted)
+                }
                 Spacer(minLength: 0)
             }.font(.system(size: 12))
             .padding(.leading, 54).padding(.trailing, 14).padding(.bottom, 10)
@@ -635,7 +723,7 @@ struct ConsoleView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 sectionTitle("Groups", icon: "square.stack.3d.up")
-                Text("Pick the lights in each group. Set each group's maximum brightness on the Console.")
+                Text("Pick the lights in each group. Set each group's maximum brightness on the Console. Fixed warmth makes a group's lights ignore looks and show steady white at a warmth you set on the Console.")
                     .font(.system(size: 12)).foregroundStyle(muted)
                 Spacer()
                 Button { edit.groups.append(FixtureGroup(name: "Group \(edit.groups.count + 1)")) } label: {
@@ -678,7 +766,13 @@ struct ConsoleView: View {
                     }
                 }
             }
-            label("MAX \(group.maxLevel)%", color: muted).frame(width: 70, alignment: .trailing)
+            Toggle("Fixed warmth", isOn: Binding(
+                get: { edit.groups[index].warmth != nil },
+                set: { edit.groups[index].warmth = $0 ? (edit.groups[index].warmth ?? FixtureGroup.defaultWarmth) : nil }))
+                .toggleStyle(.checkbox).font(.system(size: 12))
+                .help("Its lights ignore looks and show steady white at a warmth you set on the Console. They still take brightness from MIDI.")
+                .accessibilityLabel("\(group.name) fixed warmth")
+            label((group.warmth.map { "\($0) K  ·  " } ?? "") + "MAX \(group.maxLevel)%", color: muted).frame(width: 120, alignment: .trailing)
             Button { edit.groups.remove(at: index) } label: { Image(systemName: "trash") }
                 .buttonStyle(.borderless)
                 .accessibilityLabel("Delete group \(group.name)")
@@ -690,7 +784,7 @@ struct ConsoleView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 sectionTitle("Looks", icon: "paintpalette")
-                Text("A look note switches every fixture that follows looks to that colour and program. Levels still come from the fixture notes and level CCs.")
+                Text("A look note switches every fixture that follows looks to that colour and program. Levels still come from the fixture notes and level CCs. A flash look shows only while its note is held, then the previous look returns.")
                     .font(.system(size: 12)).foregroundStyle(muted)
                 Spacer()
                 Button { addLook() } label: { Label("Add look", systemImage: "plus") }
@@ -709,6 +803,7 @@ struct ConsoleView: View {
         let field = $edit.looks[index]
         let look = edit.looks[index]
         return DisclosureGroup {
+            motionPanel(field.motion, name: look.name)
             effectPanel(effect: field.effect, name: look.name, colourOneHelp: "Colour 1 is the look colour.")
         } label: {
             HStack(spacing: 12) {
@@ -720,6 +815,14 @@ struct ConsoleView: View {
                     .accessibilityLabel("Look \(index + 1) MIDI note")
                     .frame(width: 43)
                 ColorPicker("Look \(index + 1) colour", selection: rgbBinding(field.color), supportsOpacity: false).labelsHidden()
+                Toggle("Flash", isOn: field.flash)
+                    .toggleStyle(.checkbox)
+                    .help("Show this look only while its note is held, then go back to the previous look.")
+                    .accessibilityLabel("Look \(index + 1) is a flash")
+                Toggle("Movement only", isOn: field.motionOnly)
+                    .toggleStyle(.checkbox)
+                    .help("Add this look's motion but keep the colour of the look under it. Use with Flash to hold a chase over any colour.")
+                    .accessibilityLabel("Look \(index + 1) is movement only")
                 label(EffectOption.matching(look.effect.program, in: EffectSettings.programs)?.name.uppercased() ?? "", color: muted)
                     .frame(width: 150, alignment: .leading)
                 Button { edit.looks.remove(at: index) } label: { Image(systemName: "trash") }
@@ -728,6 +831,59 @@ struct ConsoleView: View {
             }
         }
         .padding(.horizontal, 14).padding(.vertical, 8)
+    }
+
+    private func motionPanel(_ motion: Binding<LookMotion?>, name: String) -> some View {
+        let style = Binding<LookMotion.Style?>(
+            get: { motion.wrappedValue?.style },
+            set: { new in
+                if let new { var m = motion.wrappedValue ?? LookMotion(); m.style = new; motion.wrappedValue = m }
+                else { motion.wrappedValue = nil }
+            })
+        func field<T>(_ key: WritableKeyPath<LookMotion, T>, _ fallback: T) -> Binding<T> {
+            Binding(get: { motion.wrappedValue?[keyPath: key] ?? fallback },
+                    set: { if motion.wrappedValue != nil { motion.wrappedValue![keyPath: key] = $0 } })
+        }
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                label("MOTION", color: muted)
+                Picker("Motion", selection: style) {
+                    Text("None").tag(LookMotion.Style?.none)
+                    ForEach(LookMotion.Style.allCases, id: \.self) { Text($0.name).tag(Optional($0)) }
+                }
+                .labelsHidden().frame(width: 150)
+                .help("Moves the light across this look's fixtures in patch order. One at a time: only one is lit. One brighter: the others stay on, dimmer.")
+                .accessibilityLabel("\(name) motion")
+                if motion.wrappedValue != nil {
+                    Picker("Order", selection: field(\.order, .forward)) {
+                        ForEach(LookMotion.Order.allCases, id: \.self) { Text($0.name).tag($0) }
+                    }
+                    .labelsHidden().frame(width: 120).accessibilityLabel("\(name) motion order")
+                    Picker("Speed", selection: field(\.stepsPerBeat, 4)) {
+                        ForEach(LookMotion.stepChoices, id: \.value) { Text($0.name).tag($0.value) }
+                    }
+                    .labelsHidden().frame(width: 130).accessibilityLabel("\(name) motion speed")
+                    .help("Steps follow MIDI clock from Ableton when it's sent to this input; otherwise they use the BPM.")
+                    label("BPM", color: muted)
+                    TextField("BPM", value: field(\.bpm, 120), format: .number.grouping(.never))
+                        .frame(width: 46).accessibilityLabel("\(name) motion tempo without clock")
+                }
+            }
+            if let current = motion.wrappedValue {
+                HStack(spacing: 12) {
+                    if current.style == .highlight {
+                        label("OTHERS \(current.dim)%", color: muted).frame(width: 90, alignment: .leading)
+                        Slider(value: Binding(get: { Double(current.dim) }, set: { motion.wrappedValue?.dim = UInt8($0.rounded()) }),
+                               in: 0...100).frame(width: 140).accessibilityLabel("\(name) other fixtures' brightness")
+                    }
+                    label("TAIL \(Int((current.tail * 100).rounded()))%", color: muted).frame(width: 70, alignment: .leading)
+                    Slider(value: field(\.tail, 0), in: 0...1).frame(width: 140)
+                        .help("0 = hard steps. Higher = each light fades out into the next step.")
+                        .accessibilityLabel("\(name) motion tail")
+                }
+            }
+        }
+        .padding(.vertical, 6)
     }
 
     private func addLook() {
@@ -896,15 +1052,16 @@ private extension FixturePatch {
 private struct ConsoleButton: ButtonStyle {
     var color: Color
     var filled = false
+    var compact = false
     @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 12, weight: .semibold))
+            .font(.system(size: compact ? 10.5 : 12, weight: .semibold))
             .foregroundStyle(filled ? bg : color)
-            .padding(.horizontal, 12).padding(.vertical, 8)
-            .background(filled ? color : Color.clear, in: RoundedRectangle(cornerRadius: 7))
-            .overlay { RoundedRectangle(cornerRadius: 7).strokeBorder(filled ? color : color.opacity(0.26)) }
+            .padding(.horizontal, compact ? 8 : 12).padding(.vertical, compact ? 4 : 8)
+            .background(filled ? color : Color.clear, in: RoundedRectangle(cornerRadius: compact ? 6 : 7))
+            .overlay { RoundedRectangle(cornerRadius: compact ? 6 : 7).strokeBorder(filled ? color : color.opacity(0.26)) }
             .opacity(!isEnabled ? 0.36 : configuration.isPressed ? 0.70 : 1)
             .contentShape(Rectangle())
     }

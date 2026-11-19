@@ -10,8 +10,23 @@ enum MIDIEvent: Equatable, Sendable {
     case noteOn(channel: Int, note: UInt8, velocity: UInt8)
     case noteOff(channel: Int, note: UInt8)
     case controlChange(channel: Int, control: UInt8, value: UInt8)
+    /// MIDI clock: 24 pulses per beat.
+    case clock
+    /// Start (position 0) or Song Position Pointer, in 16ths.
+    case locate(sixteenths: Int)
+    case stop
 
     fileprivate init?(_ message: MIDIUniversalMessage) {
+        if message.type == .system {
+            switch message.system.status.rawValue {
+            case 0xF8: self = .clock
+            case 0xFA: self = .locate(sixteenths: 0)
+            case 0xF2: self = .locate(sixteenths: Int(message.system.songPositionPointer))
+            case 0xFC: self = .stop
+            default: return nil
+            }
+            return
+        }
         guard message.type == .channelVoice1 else { return nil }
         let voice = message.channelVoice1
         let channel = Int(voice.channel) + 1

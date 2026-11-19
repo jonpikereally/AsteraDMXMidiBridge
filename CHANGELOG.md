@@ -1,5 +1,43 @@
 # Changelog
 
+## 1.13.0 (build 14) · 2026-11-19
+
+- Added **moving looks**. Open a look and set **Motion**: **One at a time** lights one fixture while the others are dark; **One brighter** keeps the others on at a dimmer level (**Others** %) and makes one at a time brighter. **Order** is 1 → 4, 4 → 1, Bounce, Outside in, Inside out or Random; **Speed** is every 2 beats, every beat, 8ths, 8th triplets, 16ths or 32nds; **Tail** makes each light fade into the next step instead of cutting.
+- Motion moves across the fixtures that follow looks (fixed-warmth groups are left out), in patch order. It only scales each fixture's level, so level CCs, fades, group maximums and the master still apply. Flash looks can move too.
+- Tick **Movement only** on a look to add just its motion and keep the colour of the look under it. With **Flash** also ticked, holding its note chases whatever colour is showing (the song's look, or a flash colour on top), and colour changes under it don't restart the chase.
+- Steps follow **MIDI clock** when it arrives on the selected input (in Ableton, turn on **Sync** for that output port), and Song Position keeps them on the bar when you start mid-song. Without clock they run at the look's **BPM**, starting from the first step when the look is chosen.
+
+## 1.12.0 (build 13) · 2026-11-18
+
+- Added **fixed warmth** for groups. Tick **Fixed warmth** on a group on the Fixture patch page and its lights ignore looks (including flashes) and show a steady white; they still take brightness from MIDI. A **Warmth** slider under the group's maximum brightness on the Console sets it from 2700 K (warm) to 6500 K (cool). It works while output is armed and is saved straight away.
+- The kelvin values are approximate: the tubes mix the white from red, green and blue.
+- A fixture in a fixed-warmth group shows where its warmth comes from, and its **Follows looks** switch is turned off.
+- Patch files keep each group's warmth. Groups saved before 1.12.0 have none.
+
+## 1.11.0 (build 12) · 2026-11-18
+
+- Each square on the fixture deck now has a small **Test fixture** button. It lights that fixture at full until you click **Stop test**, which is what clicking the whole square used to do. Clicking the rest of the square does nothing, so a stray click can't switch a light on.
+
+## 1.10.0 (build 11) · 2026-11-18
+
+- Under **Run live preview**, a row of small squares shows what each fixture in the patch is sending over DMX: lit in its current colour and brightness, outlined when it's ready at 0, and faded when the fixture is disabled. During a live preview they light in turn with the tubes. They stay dark while output is disarmed.
+
+## 1.9.0 (build 10) · 2026-11-18
+
+- **Arm live output** no longer switches lights on. Every enabled fixture gets DMX straight away (its colour and effect settings) with the dimmer at 0, and waits for MIDI to set a level. The fixture deck marks these fixtures **READY**. This replaces the 1.7.0 behaviour.
+- Added **Run live preview** under **Arm live output**. While output is armed, it lights each enabled fixture in turn over DMX so you can check every tube responds. MIDI is ignored until you stop it. Disarming stops it too.
+
+## 1.8.0 (build 9) · 2026-11-18
+
+- Added **flash looks**. Tick **Flash** on a look and it shows only while its note is held; when the note ends, the fixtures go back to the look they had before. A look note that arrives during a flash becomes the look underneath. Flash looks keep the same 50 ms minimum as fixture notes, so very short notes still reach the tubes.
+- The console's **Look** menu lists only the looks that latch, and says when a flash is showing.
+- Patch files keep the flash setting. Looks saved before 1.8.0 aren't flashes.
+
+## 1.7.0 (build 8) · 2026-11-18
+
+- **Arm live output** now switches on every enabled light at full, as if you had clicked each one on the fixture deck. Before, every light stayed dark until its MIDI arrived.
+- Each light hands over to MIDI as soon as its own note or level CC arrives, so Ableton's levels, fades and blackouts work as before. Lights you click yourself stay latched until you click them again.
+
 ## 1.6.0 (build 7) · 2026-11-17
 
 - Added **Maximum brightness** for each light, on the Console under the fixture deck. It scales everything the light outputs and works while output is armed.

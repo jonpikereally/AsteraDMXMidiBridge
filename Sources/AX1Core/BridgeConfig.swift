@@ -146,6 +146,11 @@ public struct BridgeConfig: Codable, Equatable, Sendable {
             .reduce(Double(fixture.maxLevel) / 100) { $0 * Double($1.maxLevel) / 100 }
     }
 
+    /// The fixed warmth (kelvin) for a fixture: from the first group that contains it and fixes warmth, if any.
+    public func warmth(of fixture: FixturePatch) -> Int? {
+        groups.first { $0.warmth != nil && $0.fixtureIDs.contains(fixture.id) }?.warmth
+    }
+
     /// The look a note switches to, if any.
     public func look(forNote note: UInt8) -> Look? {
         looks.first { $0.note == note }

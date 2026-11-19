@@ -85,6 +85,15 @@ private struct NoteKey: Hashable {
     private var quitReply: (() -> Void)?
     private var updateTask: Task<Void, Never>?
     private var midiStarts: [NoteKey: UInt64] = [:]
+    /// Uptime of the last MIDI clock pulse, and of the last output frame (for motion without clock).
+    private var lastClock: UInt64 = 0
+    private var lastTick: UInt64 = 0
+    /// Motion time. Kept out of the published engine so clock pulses don't redraw the window; it's copied into the
+    /// engine on each output frame while a moving look shows.
+    private var clockRunning = false
+    private var clockBeats: Double = 0
+    private var freeBeats: Double = 0
+    private var lastShownMotion: LookMotion?
     private var demoStep = 0
     private var didStart = false
 
@@ -174,7 +183,7 @@ private struct NoteKey: Hashable {
             try updated.validated(requireHost: false)
             stopDemo()
             clearNotes()
-            if let look = engine.activeLook, !updated.looks.contains(where: { $0.id == look }) {
+            if let look = engine.baseLook, !updated.looks.contains(where: { $0.id == look && !$0.flash }) {
                 engine.selectLook(nil)
             }
             config = updated
@@ -224,6 +233,17 @@ private struct NoteKey: Hashable {
         let channel: Int
         switch event {
         case let .noteOn(ch, _, _), let .noteOff(ch, _), let .controlChange(ch, _, _): channel = ch
+        case .clock:
+            lastClock = DispatchTime.now().uptimeNanoseconds
+            clockRunning = true
+            clockBeats += 1.0 / 24
+            return
+        case let .locate(sixteenths):
+            clockBeats = Double(max(0, sixteenths)) / 4
+            return
+        case .stop:
+            clockRunning = false
+            return
         }
         guard config.midiChannel == 0 || config.midiChannel == channel else { return }
         switch event {
@@ -236,8 +256,14 @@ private struct NoteKey: Hashable {
             }
             if velocity > 0, let look = config.look(forNote: note) {
                 guard !demo else { return }
-                engine.selectLook(look.id)
-                recent = "CH \(channel)  ·  LOOK  ·  \(look.name)"
+                if look.flash {
+                    midiStarts[NoteKey(channel: channel, note: note)] = DispatchTime.now().uptimeNanoseconds
+                    engine.holdFlash(look.id)
+                    recent = "CH \(channel)  ·  FLASH  ·  \(look.name)"
+                } else {
+                    engine.selectLook(look.id)
+                    recent = "CH \(channel)  ·  LOOK  ·  \(look.name)"
+                }
                 if activeMode == .usb && !usbStarting { tick() }
                 return
             }
@@ -248,6 +274,8 @@ private struct NoteKey: Hashable {
             if activeMode == .usb { tick() }
         case let .noteOff(_, note):
             releaseMIDI(NoteKey(channel: channel, note: note))
+        case .clock, .locate, .stop:
+            return
         case let .controlChange(_, control, value):
             if demo { return }
             if control == 120 || control == 123 {
@@ -277,6 +305,11 @@ private struct NoteKey: Hashable {
 
     private func finishRelease(_ key: NoteKey) {
         midiStarts[key] = nil
+        if let look = config.look(forNote: key.note), look.flash {
+            engine.releaseFlash(look.id)
+            if activeMode == .usb && !usbStarting { tick() }
+            return
+        }
         engine.noteOff(key.note, channel: key.channel)
         if activeMode == .usb { tick() }
     }
@@ -317,6 +350,14 @@ private struct NoteKey: Hashable {
         if activeMode == .usb && !usbStarting { tick() }
     }
 
+    /// Warmth (kelvin) for a group that fixes warmth. Works while output is armed and is saved straight away.
+    func setGroupWarmth(_ id: UUID, _ kelvin: Int) {
+        guard let index = config.groups.firstIndex(where: { $0.id == id }), config.groups[index].warmth != nil else { return }
+        config.groups[index].warmth = FixtureGroup.clampedWarmth(kelvin)
+        persist()
+        if activeMode == .usb && !usbStarting { tick() }
+    }
+
     func setMaster(_ value: UInt8) {
         engine.setMaster(value)
         if activeMode == .usb && !usbStarting { tick() }
@@ -331,15 +372,16 @@ private struct NoteKey: Hashable {
         if engine.blackout && live { tick() }
     }
 
+    /// Lights each enabled fixture in turn. Disarmed, it shows on the deck only; armed (live preview), the
+    /// frames go out over DMX so every tube can be checked. MIDI is ignored while it runs.
     func toggleDemo() {
-        guard !live else { return }
         if demo { stopDemo(); return }
-        guard !engine.blackout else { return }
+        guard !engine.blackout, !usbStarting, !usbClosing else { return }
         clearNotes()
         demo = true
         demoStep = 0
         playDemoStep()
-        let timer = Timer(timeInterval: 0.30, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: live ? 0.5 : 0.30, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.playDemoStep() }
         }
         demoTimer = timer
@@ -359,7 +401,7 @@ private struct NoteKey: Hashable {
             }
         }
         demoStep = (demoStep + 1) % active.count
-        recent = "PREVIEW  ·  RUNNING"
+        recent = live ? "LIVE PREVIEW  ·  \(active[(demoStep + active.count - 1) % active.count].name.uppercased())" : "PREVIEW  ·  RUNNING"
     }
 
     func stopDemo() {
@@ -402,6 +444,8 @@ private struct NoteKey: Hashable {
             }
             activeMode = outputMode
             live = true
+            // Every enabled fixture gets frames straight away: its colour and effect settings, with the dimmer
+            // at 0 until MIDI (or a click on the deck) sets a level.
             tick()
             guard live else { return }
             let timer = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
@@ -416,6 +460,17 @@ private struct NoteKey: Hashable {
 
     private func tick() {
         guard live, let activeMode else { return }
+        let now = DispatchTime.now().uptimeNanoseconds
+        if clockRunning, now &- lastClock > 500_000_000 { clockRunning = false }
+        let motion = engine.activeMotion(config)
+        if !clockRunning {
+            // Without clock a new motion starts from its first step, at its own tempo. Colour changes under it don't restart it.
+            if motion != lastShownMotion { freeBeats = 0 }
+            else if lastTick != 0, now > lastTick, let motion { freeBeats += Double(now - lastTick) / 1e9 * max(1, motion.bpm) / 60 }
+        }
+        lastShownMotion = motion
+        lastTick = now
+        if motion != nil { engine.setBeats(clockRunning ? clockBeats : freeBeats) }
         do {
             let frame = engine.frame(config: config)
             switch activeMode {
@@ -431,9 +486,11 @@ private struct NoteKey: Hashable {
     private func disarm(tryZero: Bool = true) {
         timer?.invalidate()
         timer = nil
+        lastTick = 0
         let previous = activeMode
         activeMode = nil
         live = false
+        stopDemo()
         clearNotes()
         if previous == .artnet {
             if tryZero {
