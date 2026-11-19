@@ -466,7 +466,7 @@ final class AX1CoreTests: XCTestCase {
         engine.controlChange(21, value: 0, config: config)
         XCTAssertEqual(engine.frame(config: config)[0], 0)
         engine.setStopped(true)
-        XCTAssertEqual(engine.frame(config: config)[0], 153)    // 60% of 255
+        XCTAssertEqual(engine.frame(config: config)[0], RGB.scaledComponent(255, velocity: 76, master: 127))
         engine.controlChange(21, value: 127, config: config)
         XCTAssertEqual(engine.frame(config: config)[0], 255)
         engine.setStopped(false)
