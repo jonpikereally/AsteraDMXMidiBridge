@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.14.0 (build 16) · 2026-11-19
+
+- When the patch has groups, the top bar now has a **Blackout** button for each one (for example **Blackout Stage** and **Blackout Front wash**). It darkens only that group's lights. MIDI is still followed underneath, so **Release** brings them straight back to their current level. The status pill shows which groups are dark. Group blackouts aren't saved and work with or without output armed.
+- The main **Blackout** button is unchanged and still stops every light.
+
 ## 1.13.0 (build 14) · 2026-11-19
 
 - Added **moving looks**. Open a look and set **Motion**: **One at a time** lights one fixture while the others are dark; **One brighter** keeps the others on at a dimmer level (**Others** %) and makes one at a time brighter. **Order** is 1 → 4, 4 → 1, Bounce, Outside in, Inside out or Random; **Speed** is every 2 beats, every beat, 8ths, 8th triplets, 16ths or 32nds; **Tail** makes each light fade into the next step instead of cutting.

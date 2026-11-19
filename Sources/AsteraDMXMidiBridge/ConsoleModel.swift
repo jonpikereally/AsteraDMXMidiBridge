@@ -363,6 +363,12 @@ private struct NoteKey: Hashable {
         if activeMode == .usb && !usbStarting { tick() }
     }
 
+    /// Darkens one group's lights (or brings them back). MIDI keeps being tracked underneath. Not saved.
+    func toggleGroupBlackout(_ id: UUID) {
+        engine.setGroupBlackout(id, !engine.blackedOutGroups.contains(id))
+        if live && !usbStarting { tick() }
+    }
+
     func toggleBlackout() {
         if !engine.blackout {
             stopDemo()

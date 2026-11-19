@@ -104,6 +104,16 @@ struct ConsoleView: View {
             }
             Spacer()
             livePill
+            ForEach(model.config.groups) { group in
+                let dark = model.engine.blackedOutGroups.contains(group.id)
+                let name = group.name.isEmpty ? "Group" : group.name
+                Button { model.toggleGroupBlackout(group.id) } label: {
+                    Label(dark ? "Release \(name)" : "Blackout \(name)", systemImage: "moon")
+                }
+                .buttonStyle(ConsoleButton(color: danger, filled: dark, compact: true))
+                .help(dark ? "Bring \(name)'s lights back to their current MIDI level." : "Darken only \(name)'s lights. MIDI is still followed, so releasing brings them straight back.")
+                .accessibilityValue(dark ? "Blacked out" : "On")
+            }
             Button(action: model.toggleBlackout) {
                 Label(model.engine.blackout ? "Release blackout" : "Blackout", systemImage: "moon.fill")
             }
@@ -115,10 +125,11 @@ struct ConsoleView: View {
 
     private var livePill: some View {
         let blackout = model.engine.blackout
-        let tint = blackout ? danger : (model.live ? accent : muted)
+        let groupsDark = model.config.groups.filter { model.engine.blackedOutGroups.contains($0.id) }.map { $0.name.uppercased() }
+        let tint = blackout || !groupsDark.isEmpty ? danger : (model.live ? accent : muted)
         return HStack(spacing: 8) {
             Circle().fill(tint).frame(width: 7, height: 7)
-            label(blackout ? "BLACKOUT" : model.usbStarting ? "STARTING USB" : model.usbClosing ? "STOPPING USB" : model.live ? "OUTPUT ARMED" : "PREVIEW ONLY", color: tint)
+            label(blackout ? "BLACKOUT" : !groupsDark.isEmpty ? groupsDark.joined(separator: " + ") + " DARK" : model.usbStarting ? "STARTING USB" : model.usbClosing ? "STOPPING USB" : model.live ? "OUTPUT ARMED" : "PREVIEW ONLY", color: tint)
         }
         .padding(.horizontal, 11).padding(.vertical, 8)
         .background(tint.opacity(0.085), in: Capsule())
@@ -198,7 +209,7 @@ struct ConsoleView: View {
     private func output(of fixture: FixturePatch) -> (level: Double, tint: Color) {
         let velocity = UInt8(clamping: Int((Double((0..<fixture.noteCount).map { model.engine.level(of: fixture, pixel: $0) }.max() ?? 0)
             * model.engine.motionFactor(of: fixture, config: model.config)).rounded()))
-        let level = fixture.enabled && !model.engine.blackout
+        let level = fixture.enabled && !model.engine.blackout && !model.engine.isBlackedOut(fixture, config: model.config)
             ? (Double(velocity) / 127) * (Double(model.engine.master) / 127) * model.config.limit(of: fixture) : 0
         var shown = fixture
         shown.color = model.engine.appearance(of: fixture, config: model.config).color

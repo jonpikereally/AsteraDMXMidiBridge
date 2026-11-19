@@ -4,6 +4,9 @@ public struct LightingEngine: Sendable {
     private var heldNotes: [Int: [UInt8: UInt8]] = [:]
     public private(set) var master: UInt8 = 127
     public private(set) var blackout = false
+    /// Groups switched dark from the top bar. Their lights output 0 while MIDI keeps being tracked, so releasing
+    /// a group brings its lights straight back to their current level.
+    public private(set) var blackedOutGroups: Set<UUID> = []
     /// The look chosen by the last look note that isn't a flash. Nil means each fixture uses its own patch settings.
     public private(set) var baseLook: UUID?
     /// Flash looks whose notes are held, oldest first.
@@ -145,6 +148,15 @@ public struct LightingEngine: Sendable {
         blackout = flag
     }
 
+    public mutating func setGroupBlackout(_ id: UUID, _ flag: Bool) {
+        if flag { blackedOutGroups.insert(id) } else { blackedOutGroups.remove(id) }
+    }
+
+    /// True when the fixture is in a group that is blacked out.
+    public func isBlackedOut(_ fixture: FixturePatch, config: BridgeConfig) -> Bool {
+        !blackedOutGroups.isEmpty && config.groups.contains { blackedOutGroups.contains($0.id) && $0.fixtureIDs.contains(fixture.id) }
+    }
+
     /// Releases held notes and flashes and resets level CCs to 0. The base look stays.
     public mutating func clearNotes() {
         heldNotes.removeAll()
@@ -164,7 +176,7 @@ public struct LightingEngine: Sendable {
 
             let look = appearance(of: fixture, config: config)
             let limit = config.limit(of: fixture)
-            let motion = motionFactor(of: fixture, config: config)
+            let motion = isBlackedOut(fixture, config: config) ? 0 : motionFactor(of: fixture, config: config)
             if profile.isEffect {
                 // Effect settings are sent continuously so the program keeps running;
                 // the note or level CC only opens the dimmer on channel 1.

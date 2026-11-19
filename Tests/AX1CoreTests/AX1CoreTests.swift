@@ -457,4 +457,21 @@ final class AX1CoreTests: XCTestCase {
         XCTAssertEqual(highlight.factor(index: 2, count: 4, beats: 0.5), 0.25)
         XCTAssertEqual(LookMotion(stepsPerBeat: 1, tail: 1).factor(index: 0, count: 4, beats: 1.5), 0.5, accuracy: 1e-9)
     }
+
+    func testGroupBlackoutDarkensOnlyThatGroup() {
+        let stage = FixturePatch(name: "S", address: 1, note: 36, color: RGB(255, 255, 255), profile: .effectRGB, levelCC: 20)
+        let front = FixturePatch(name: "F", address: 22, note: 40, color: RGB(255, 255, 255), profile: .effectRGB, levelCC: 21)
+        var config = BridgeConfig(host: "", universe: 0, midiChannel: 0, masterCC: 7, fixtures: [stage, front])
+        let frontGroup = FixtureGroup(name: "Front", fixtureIDs: [front.id])
+        config.groups = [FixtureGroup(name: "Stage", fixtureIDs: [stage.id]), frontGroup]
+        var engine = LightingEngine()
+        engine.controlChange(20, value: 127, config: config)
+        engine.controlChange(21, value: 127, config: config)
+        engine.setGroupBlackout(frontGroup.id, true)
+        XCTAssertEqual(engine.frame(config: config)[0], 255)
+        XCTAssertEqual(engine.frame(config: config)[21], 0)
+        engine.controlChange(21, value: 64, config: config)       // MIDI is still followed
+        engine.setGroupBlackout(frontGroup.id, false)
+        XCTAssertEqual(engine.frame(config: config)[21], 129)    // CC 64 of 127
+    }
 }

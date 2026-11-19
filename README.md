@@ -103,6 +103,10 @@ Tick **Movement only** (usually with **Flash**) to make a look that adds only it
 
 Maximums, groups and warmth are saved in exported patch files.
 
+## Group blackouts
+
+If the patch has groups, the top bar has a **Blackout** button for each one. It darkens only that group's lights, for example the front wash, and leaves everything else running. The bridge keeps following MIDI underneath, so **Release** brings them back to whatever level Ableton has them at now. The main **Blackout** button still stops every light.
+
 ## Save and share patches
 
 On **Fixture patch**, click **Export…** to save the patch shown, including every fixture’s profile, address, note, level CC, maximum brightness, colours and effect settings, the looks and groups, plus the MIDI channel and master CC, as a `.json` file. Click **Import…** to load one into the editor, check it, and click **Apply patch** to use it. Imports leave your output method, Art-Net address and universe unchanged. If an import or export fails, the error code is listed in the [error list](docs/error-list.md).
