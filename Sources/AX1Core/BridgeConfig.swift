@@ -151,11 +151,6 @@ public struct BridgeConfig: Codable, Equatable, Sendable {
         groups.first { $0.warmth != nil && $0.fixtureIDs.contains(fixture.id) }?.warmth
     }
 
-    /// The level (0–100 percent) a fixture stays at least at while Ableton is stopped: the highest of its groups'.
-    public func stoppedLevel(of fixture: FixturePatch) -> UInt8? {
-        groups.filter { $0.fixtureIDs.contains(fixture.id) }.compactMap(\.stoppedLevel).max()
-    }
-
     /// The look a note switches to, if any.
     public func look(forNote note: UInt8) -> Look? {
         looks.first { $0.note == note }

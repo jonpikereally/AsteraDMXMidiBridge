@@ -34,19 +34,6 @@ public struct LightingEngine: Sendable {
 
     public init() {}
 
-    /// True while Ableton is stopped (no MIDI clock). Groups with a stopped level keep their lights on.
-    public private(set) var stopped = false
-
-    public mutating func setStopped(_ flag: Bool) {
-        stopped = flag
-    }
-
-    /// The level (0–127) a fixture is held at least at while stopped; 0 while playing or without a stopped level.
-    public func stoppedVelocity(of fixture: FixturePatch, config: BridgeConfig) -> UInt8 {
-        guard stopped, let percent = config.stoppedLevel(of: fixture) else { return 0 }
-        return UInt8((Double(percent) * 127 / 100).rounded())
-    }
-
     public mutating func setBeats(_ value: Double) {
         beats = max(0, value)
     }
@@ -178,12 +165,11 @@ public struct LightingEngine: Sendable {
             let look = appearance(of: fixture, config: config)
             let limit = config.limit(of: fixture)
             let motion = motionFactor(of: fixture, config: config)
-            let floor = stoppedVelocity(of: fixture, config: config)
             if profile.isEffect {
                 // Effect settings are sent continuously so the program keeps running;
                 // the note or level CC only opens the dimmer on channel 1.
                 let start = fixture.address - 1
-                let velocity = Self.scaled(max(level(of: fixture, notes: active), floor), by: motion)
+                let velocity = Self.scaled(level(of: fixture, notes: active), by: motion)
                 slots[start] = velocity > 0 ? RGB.scaledComponent(255, velocity: velocity, master: master, limit: limit) : 0
                 for (offset, value) in look.effect.slots(color1: look.color).enumerated() {
                     slots[start + 1 + offset] = value
@@ -192,7 +178,7 @@ public struct LightingEngine: Sendable {
             }
 
             for pixel in 0..<profile.pixelCount {
-                let velocity = Self.scaled(max(level(of: fixture, pixel: pixel, notes: active), floor), by: motion)
+                let velocity = Self.scaled(level(of: fixture, pixel: pixel, notes: active), by: motion)
                 guard velocity > 0 else { continue }
                 var slot = fixture.address - 1 + pixel * profile.slotsPerPixel
                 if profile.hasDimmer {

@@ -1,11 +1,5 @@
 # Changelog
 
-## 1.14.0 (build 15) · 2026-11-19
-
-- Added **On when stopped** for groups. Tick it on a group on the Fixture patch page, then set its level on the Console (**When Ableton is stopped**). While no MIDI clock arrives, that group's lights stay at that level or above, so a front wash stays on between songs. As soon as Ableton plays, MIDI alone sets their level again, so the songs' fades work as before.
-- The bridge knows Ableton is playing from its MIDI clock: in Ableton, turn on **Sync** for the output port the lights use (Settings → Link, Tempo & MIDI). Without clock the bridge always counts as stopped, so those lights never go below their stopped level.
-- The Console shows whether the bridge currently sees Ableton as playing or stopped. Patch files keep each group's stopped level. Groups saved before 1.14.0 have none.
-
 ## 1.13.0 (build 14) · 2026-11-19
 
 - Added **moving looks**. Open a look and set **Motion**: **One at a time** lights one fixture while the others are dark; **One brighter** keeps the others on at a dimmer level (**Others** %) and makes one at a time brighter. **Order** is 1 → 4, 4 → 1, Bounce, Outside in, Inside out or Random; **Speed** is every 2 beats, every beat, 8ths, 8th triplets, 16ths or 32nds; **Tail** makes each light fade into the next step instead of cutting.
