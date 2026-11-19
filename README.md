@@ -103,6 +103,12 @@ Tick **Movement only** (usually with **Flash**) to make a look that adds only it
 
 Maximums, groups and warmth are saved in exported patch files.
 
+## Keep lights on while Ableton is stopped
+
+Tick **On when stopped** on a group on the Fixture patch page (for example the front wash), then set **When Ableton is stopped** under that group on the Console. While Ableton is stopped, those lights stay at that level or above; when it plays, MIDI sets their level as usual.
+
+The bridge tells playing from stopped by MIDI clock, so turn on **Sync** for the lights' output port in Ableton (Settings → Link, Tempo & MIDI). Without clock it always counts as stopped.
+
 ## Save and share patches
 
 On **Fixture patch**, click **Export…** to save the patch shown, including every fixture’s profile, address, note, level CC, maximum brightness, colours and effect settings, the looks and groups, plus the MIDI channel and master CC, as a `.json` file. Click **Import…** to load one into the editor, check it, and click **Apply patch** to use it. Imports leave your output method, Art-Net address and universe unchanged. If an import or export fails, the error code is listed in the [error list](docs/error-list.md).

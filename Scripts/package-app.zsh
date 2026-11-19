@@ -9,7 +9,7 @@ fi
 project_dir=${0:A:h:h}
 output_zip=${1:-"$project_dir/dist/AsteraDMXMidiBridge.zip"}
 output_zip=${output_zip:a}
-build_number=${AX1_BUILD_NUMBER:-14}
+build_number=${AX1_BUILD_NUMBER:-15}
 build_date=$(/bin/date -u '+%Y-%m-%dT%H:%M:%SZ')
 
 if [[ $output_zip != *.zip || $build_number != <1-> ]]; then
@@ -63,7 +63,7 @@ plist="$app/Contents/Info.plist"
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.13.0</string>
+    <string>1.14.0</string>
     <key>CFBundleVersion</key>
     <string>$build_number</string>
     <key>AX1BuildDate</key>

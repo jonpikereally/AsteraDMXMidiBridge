@@ -358,6 +358,15 @@ private struct NoteKey: Hashable {
         if activeMode == .usb && !usbStarting { tick() }
     }
 
+    /// Level a group's lights stay at least at while Ableton is stopped (0–100 %), or nil for none.
+    /// Works while output is armed and is saved straight away.
+    func setGroupStoppedLevel(_ id: UUID, _ value: Int?) {
+        guard let index = config.groups.firstIndex(where: { $0.id == id }) else { return }
+        config.groups[index].stoppedLevel = value.map { UInt8(clamping: min(100, max(0, $0))) }
+        persist()
+        if activeMode == .usb && !usbStarting { tick() }
+    }
+
     func setMaster(_ value: UInt8) {
         engine.setMaster(value)
         if activeMode == .usb && !usbStarting { tick() }
@@ -462,6 +471,8 @@ private struct NoteKey: Hashable {
         guard live, let activeMode else { return }
         let now = DispatchTime.now().uptimeNanoseconds
         if clockRunning, now &- lastClock > 500_000_000 { clockRunning = false }
+        // Ableton counts as playing only while its MIDI clock arrives (Sync on for this output).
+        if engine.stopped == clockRunning { engine.setStopped(!clockRunning) }
         let motion = engine.activeMotion(config)
         if !clockRunning {
             // Without clock a new motion starts from its first step, at its own tempo. Colour changes under it don't restart it.

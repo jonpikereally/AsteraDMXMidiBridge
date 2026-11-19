@@ -457,4 +457,20 @@ final class AX1CoreTests: XCTestCase {
         XCTAssertEqual(highlight.factor(index: 2, count: 4, beats: 0.5), 0.25)
         XCTAssertEqual(LookMotion(stepsPerBeat: 1, tail: 1).factor(index: 0, count: 4, beats: 1.5), 0.5, accuracy: 1e-9)
     }
+
+    func testStoppedLevelKeepsGroupOnWhileStopped() {
+        let front = FixturePatch(name: "F", address: 1, note: 40, color: RGB(255, 255, 255), profile: .effectRGB, levelCC: 21)
+        var config = BridgeConfig(host: "", universe: 0, midiChannel: 0, masterCC: 7, fixtures: [front])
+        config.groups = [FixtureGroup(name: "Front", fixtureIDs: [front.id], stoppedLevel: 60)]
+        var engine = LightingEngine()
+        engine.controlChange(21, value: 0, config: config)
+        XCTAssertEqual(engine.frame(config: config)[0], 0)
+        engine.setStopped(true)
+        XCTAssertEqual(engine.frame(config: config)[0], RGB.scaledComponent(255, velocity: 76, master: 127))
+        engine.controlChange(21, value: 127, config: config)
+        XCTAssertEqual(engine.frame(config: config)[0], 255)
+        engine.setStopped(false)
+        engine.controlChange(21, value: 0, config: config)
+        XCTAssertEqual(engine.frame(config: config)[0], 0)
+    }
 }

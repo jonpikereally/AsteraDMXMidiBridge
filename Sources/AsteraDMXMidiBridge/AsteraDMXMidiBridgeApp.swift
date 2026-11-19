@@ -198,8 +198,9 @@ struct ConsoleView: View {
     private func output(of fixture: FixturePatch) -> (level: Double, tint: Color) {
         let velocity = UInt8(clamping: Int((Double((0..<fixture.noteCount).map { model.engine.level(of: fixture, pixel: $0) }.max() ?? 0)
             * model.engine.motionFactor(of: fixture, config: model.config)).rounded()))
+        let held = max(velocity, model.engine.stoppedVelocity(of: fixture, config: model.config))
         let level = fixture.enabled && !model.engine.blackout
-            ? (Double(velocity) / 127) * (Double(model.engine.master) / 127) * model.config.limit(of: fixture) : 0
+            ? (Double(held) / 127) * (Double(model.engine.master) / 127) * model.config.limit(of: fixture) : 0
         var shown = fixture
         shown.color = model.engine.appearance(of: fixture, config: model.config).color
         return (level, fixtureColor(shown))
@@ -305,6 +306,9 @@ struct ConsoleView: View {
                             if let kelvin = group.warmth {
                                 warmthSlider(group, kelvin: kelvin)
                             }
+                            if let level = group.stoppedLevel {
+                                stoppedSlider(group, level: Int(level))
+                            }
                         }
                     }
                 }
@@ -326,6 +330,26 @@ struct ConsoleView: View {
         }
         .padding(13).rackPanel()
         .padding(.top, 6)
+    }
+
+    /// Level a group stays at least at while Ableton is stopped (no MIDI clock).
+    private func stoppedSlider(_ group: FixtureGroup, level: Int) -> some View {
+        let name = group.name.isEmpty ? "Group" : group.name
+        let stopped = model.engine.stopped
+        return VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                label("WHEN ABLETON IS STOPPED", color: muted)
+                Spacer()
+                label("\(level)%", color: accent)
+            }
+            Slider(value: Binding(get: { Double(level) }, set: { model.setGroupStoppedLevel(group.id, Int($0.rounded())) }),
+                   in: 0...100, step: 1)
+                .accessibilityLabel("\(name) level when Ableton is stopped")
+                .accessibilityValue("\(level) percent")
+            label(!model.live ? "APPLIES WHILE ARMED" : stopped ? "STOPPED · NO MIDI CLOCK · HOLDING \(level)%" : "PLAYING · MIDI CLOCK · MIDI SETS THE LEVEL",
+                  color: stopped && model.live ? accent : muted)
+        }
+        .help("While no MIDI clock arrives, \(name)'s lights stay at this level or above. When Ableton plays (with Sync on for the bridge's port), MIDI alone sets their level again.")
     }
 
     /// Steady-white warmth for a group that fixes warmth, from warm (2700 K) to cool (6500 K).
@@ -772,6 +796,12 @@ struct ConsoleView: View {
                 .toggleStyle(.checkbox).font(.system(size: 12))
                 .help("Its lights ignore looks and show steady white at a warmth you set on the Console. They still take brightness from MIDI.")
                 .accessibilityLabel("\(group.name) fixed warmth")
+            Toggle("On when stopped", isOn: Binding(
+                get: { edit.groups[index].stoppedLevel != nil },
+                set: { edit.groups[index].stoppedLevel = $0 ? (edit.groups[index].stoppedLevel ?? FixtureGroup.defaultStoppedLevel) : nil }))
+                .toggleStyle(.checkbox).font(.system(size: 12))
+                .help("Keep its lights on while Ableton is stopped (no MIDI clock), at a level you set on the Console. Needs Sync on for the bridge's port in Ableton.")
+                .accessibilityLabel("\(group.name) on when stopped")
             label((group.warmth.map { "\($0) K  ·  " } ?? "") + "MAX \(group.maxLevel)%", color: muted).frame(width: 120, alignment: .trailing)
             Button { edit.groups.remove(at: index) } label: { Image(systemName: "trash") }
                 .buttonStyle(.borderless)
